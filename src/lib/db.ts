@@ -1,7 +1,7 @@
 import { createClient } from "@libsql/client";
 
 // ============================================================
-// Storage em memória para desenvolvimento local
+// Storage em memória para desenvolvimento local (fallback)
 // Em produção (Vercel + Turso), usa libsql client real
 // ============================================================
 let memoryDomains: Map<string, { domain: string; isActive: boolean; createdAt: string; updatedAt: string }> = new Map();
@@ -97,6 +97,8 @@ function createDbClient() {
 
 export async function initDb() {
   const db = createDbClient();
+
+  // Cada statement executado separadamente (libsql não aceita múltiplos)
   await db.execute(`
     CREATE TABLE IF NOT EXISTS domains (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,7 +106,7 @@ export async function initDb() {
       is_active INTEGER DEFAULT 1,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
+    )
   `);
 
   await db.execute(`
@@ -121,12 +123,15 @@ export async function initDb() {
       raw_response TEXT,
       checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
+    )
   `);
 
   await db.execute(`
-    CREATE INDEX IF NOT EXISTS idx_cert_checks_domain ON certificate_checks(domain);
-    CREATE INDEX IF NOT EXISTS idx_cert_checks_checked_at ON certificate_checks(checked_at);
+    CREATE INDEX IF NOT EXISTS idx_cert_checks_domain ON certificate_checks(domain)
+  `);
+
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_cert_checks_checked_at ON certificate_checks(checked_at)
   `);
 }
 
