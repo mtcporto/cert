@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
-import { db, initDb } from "@/lib/db";
+import { initDb, query } from "@/lib/db";
 
 export async function GET() {
   try {
     await initDb();
-    const result = await db.execute(
+    const result = await query(
       "SELECT domain, is_active, created_at, updated_at FROM domains WHERE is_active = 1 ORDER BY created_at DESC"
     );
-    const domains = result.rows.map((row: any) => ({
-      domain: row.domain as string,
+    const rows: any[] = result.rows as any[];
+    const domains = rows.map((row) => ({
+      domain: row.domain,
       isActive: Boolean(row.is_active),
-      createdAt: row.created_at as string,
-      updatedAt: row.updated_at as string,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     }));
     return NextResponse.json({ domains });
   } catch (error: any) {
@@ -35,20 +36,19 @@ export async function POST(req: Request) {
       );
     }
 
-    // Limpa e insere os domínios
-    await db.execute("DELETE FROM domains");
+    await query("DELETE FROM domains");
 
     for (const domain of domains) {
-      await db.execute(
-        "INSERT INTO domains (domain, is_active) VALUES (?, 1)",
-        [domain]
-      );
+      await query("INSERT INTO domains (domain, is_active) VALUES (?, 1)", [
+        domain,
+      ]);
     }
 
-    const result = await db.execute(
+    const result = await query(
       "SELECT domain FROM domains WHERE is_active = 1 ORDER BY created_at DESC"
     );
-    const saved = result.rows.map((row: any) => row.domain as string);
+    const rows: any[] = result.rows as any[];
+    const saved = rows.map((row) => row.domain);
 
     return NextResponse.json({ domains: saved });
   } catch (error: any) {

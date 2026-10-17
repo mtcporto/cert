@@ -1,23 +1,24 @@
 import { NextResponse } from "next/server";
-import { db, initDb } from "@/lib/db";
+import { initDb, query } from "@/lib/db";
 
 export async function GET() {
   try {
     await initDb();
-    const result = await db.execute(`
+    const result = await query(`
       SELECT domain, grade, status, validity_days, expiry_date, issuer, checked_at
       FROM certificate_checks
       ORDER BY checked_at DESC
       LIMIT 100
     `);
-    const checks = result.rows.map((row: any) => ({
-      domain: row.domain as string,
-      grade: row.grade as string,
-      status: row.status as string,
-      validityDays: row.validity_days as number | null,
-      expiryDate: row.expiry_date as string | null,
-      issuer: row.issuer as string | null,
-      checkedAt: row.checked_at as string,
+    const rows: any[] = result.rows as any[];
+    const checks = rows.map((row) => ({
+      domain: row.domain,
+      grade: row.grade,
+      status: row.status,
+      validityDays: row.validity_days,
+      expiryDate: row.expiry_date,
+      issuer: row.issuer,
+      checkedAt: row.checked_at,
     }));
     return NextResponse.json({ checks });
   } catch (error: any) {
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "domain is required" }, { status: 400 });
     }
 
-    await db.execute(
+    await query(
       `INSERT INTO certificate_checks
        (domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, raw_response)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
