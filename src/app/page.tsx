@@ -160,8 +160,8 @@ export default function Home() {
             <div className="rounded-xl border border-card-border bg-card p-5 shadow-sm">
               <h3 className="font-semibold mb-3">Lista de Domínios</h3>
               <div className="max-h-48 overflow-y-auto space-y-2">
-                {domains.map((d) => (
-                  <div key={d} className="flex items-center justify-between p-2 rounded border border-card-border/50 text-sm">
+                {domains.map((d, index) => (
+                  <div key={`${d}-${index}`} className="flex items-center justify-between p-2 rounded border border-card-border/50 text-sm">
                     <span className="text-foreground truncate">{d}</span>
                     <button
                       onClick={() =>

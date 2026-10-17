@@ -24,7 +24,11 @@ export function useCertificates() {
       if (res.ok) {
         const data = await res.json();
         if (data.domains && data.domains.length > 0) {
-          setDomains(data.domains);
+          // Normalizar: aceitar array de strings ou array de objetos {domain, ...}
+          const domainsList = data.domains.map((d: any) =>
+            typeof d === "string" ? d : d.domain
+          );
+          setDomains(domainsList);
         }
       }
     } catch {
