@@ -28,20 +28,29 @@ export function UrgentAlertBanner() {
   if (activeAlerts.length === 0) return null;
 
   return (
-    <div className="border-b border-card-border bg-amber-50 dark:bg-amber-900/20">
+    <div className="border-b border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20">
       {activeAlerts.map((alert) => (
-        <div key={alert.id} className="px-6 py-3 flex items-center gap-3 bg-amber-50 dark:bg-amber-900/20">
-          <div className={`p-2 rounded ${alert.type === "error" ? "bg-rose-500/20" : "bg-amber-500/20"}`}>
+        <div key={alert.id} className="px-6 py-3 flex items-center gap-3">
+          <div className={`p-2 rounded-md ${alert.type === "error" ? "bg-rose-500/20" : "bg-amber-500/20"}`}>
             <AlertTriangle className={`w-4 h-4 ${alert.type === "error" ? "text-rose-500" : "text-amber-500"}`} />
           </div>
-          <div className="flex-1">
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-              {alert.domain ? `<span class="font-bold uppercase text-[10px]">${alert.domain}</span> ${alert.message}` : alert.message}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-200 leading-tight">
+              {alert.domain ? (
+                <>
+                  <span className="font-bold uppercase text-[10px] text-rose-600 dark:text-rose-400 mr-1.5">
+                    {alert.domain}
+                  </span>
+                  {alert.message}
+                </>
+              ) : (
+                alert.message
+              )}
             </p>
           </div>
           <button
             onClick={() => setDismissed((prev) => new Set([...prev, alert.id]))}
-            className="text-muted-foreground hover:text-foreground"
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"
             aria-label="Fechar aviso"
           >
             <X className="w-4 h-4" />

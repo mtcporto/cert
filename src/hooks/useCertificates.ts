@@ -11,12 +11,25 @@ const DEFAULT_DOMAINS: string[] = [
   "ride4x4.com",
 ];
 
+function makePendingResult(domain: string): CertificateResult {
+  return {
+    domain,
+    grade: "⏳",
+    status: "pending",
+    statusText: "Aguardando análise",
+    icon: "clock",
+    statusClass: "",
+    validity: "Verificando...",
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 export function useCertificates() {
   const [results, setResults] = useState<CertificateResult[]>([]);
   const [domains, setDomains] = useState<string[]>(DEFAULT_DOMAINS);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeDomain, setActiveDomain] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeDomain, setActiveDomain] = useState<string | null>(null);
 
   const loadDomains = useCallback(async () => {
     try {
@@ -24,7 +37,6 @@ export function useCertificates() {
       if (res.ok) {
         const data = await res.json();
         if (data.domains && data.domains.length > 0) {
-          // Normalizar: aceitar array de strings ou array de objetos {domain, ...}
           const domainsList = data.domains.map((d: any) =>
             typeof d === "string" ? d : d.domain
           );
@@ -57,6 +69,8 @@ export function useCertificates() {
       let issuer: string | undefined;
       let totalValidityDays: number | undefined;
       let percentRemaining: number | undefined;
+      let protocols: string[] = [];
+      let vulnerabilities: string[] = [];
 
       if (status === "READY") {
         const valid = endpoint?.statusMessage === "Ready" && grade !== "N/A";
@@ -65,7 +79,6 @@ export function useCertificates() {
           certStatus = "error";
           statusText = "Certificado inválido";
         } else {
-          // Busca cert correspondente ao domínio
           const mainCert = data.certs?.find(
             (c: any) =>
               c.commonNames?.includes(domain) || c.altNames?.includes(domain)
@@ -104,6 +117,24 @@ export function useCertificates() {
               }
             }
           }
+
+          // Extrair protocolos e vulnerabilidades dos endpoints
+          if (endpoint?.details) {
+            const details: any = endpoint.details;
+            if (details.protocols) {
+              protocols = details.protocols
+                .filter((p: any) => p.status === "supported")
+                .map((p: any) => p.name);
+            }
+            if (details.vulnerabilities) {
+              const vulns: any = details.vulnerabilities;
+              Object.entries(vulns).forEach(([key, val]: any) => {
+                if (val && val.vulnerable) {
+                  vulnerabilities.push(key);
+                }
+              });
+            }
+          }
         }
       } else if (status === "ERROR") {
         certStatus = "error";
@@ -119,13 +150,21 @@ export function useCertificates() {
         statusClass: "",
         validity:
           validityDays !== undefined
-            ? formatValidity(validityDays)
+            ? validityDays < 0
+              ? "Expirado"
+              : validityDays === 0
+                ? "Expira hoje"
+                : validityDays === 1
+                  ? "1 dia"
+                  : `${validityDays} dias`
             : "Verificando...",
         validityDays,
         expiryDate,
         issuer,
         totalValidityDays,
         percentRemaining,
+        protocols,
+        vulnerabilities,
         checkedAt: new Date().toISOString(),
       };
 
@@ -143,6 +182,8 @@ export function useCertificates() {
             issuer,
             totalValidityDays,
             percentRemaining,
+            protocols,
+            vulnerabilities,
             rawResponse: JSON.stringify(data),
           }),
         });
@@ -160,18 +201,13 @@ export function useCertificates() {
         icon: "alert-circle",
         statusClass: "",
         validity: err.message || "Falha desconhecida",
+        protocols: [],
+        vulnerabilities: [],
         checkedAt: new Date().toISOString(),
         error: err.message,
       };
     }
   }, []);
-
-  const formatValidity = (days: number): string => {
-    if (days < 0) return "Expirado";
-    if (days === 0) return "Expira hoje";
-    if (days === 1) return "1 dia";
-    return `${days} dias`;
-  };
 
   const runAnalysis = useCallback(async () => {
     if (domains.length === 0) return;
@@ -179,6 +215,10 @@ export function useCertificates() {
     setIsLoading(true);
     setError(null);
     setActiveDomain(null);
+
+    // CRIA PLACEHOLDERS IMEDIATOS para todos os domínios
+    const initialPlaceholders = domains.map((d) => makePendingResult(d));
+    setResults(initialPlaceholders);
 
     const batchSize = 3;
     const queue = [...domains];
@@ -206,7 +246,6 @@ export function useCertificates() {
             active.delete(domain);
           }
 
-          // Delay entre requisições para evitar rate limit
           await new Promise((r) => setTimeout(r, 2000));
         }
 

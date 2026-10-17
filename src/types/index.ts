@@ -1,4 +1,6 @@
-export type SslGrade = "A+" | "A" | "A-" | "B+" | "B" | "B-" | "C+" | "C" | "C-" | "T" | "F" | "N/A";
+export type SslGrade =
+  | "A+" | "A" | "A-" | "B+" | "B" | "B-" | "C+" | "C" | "C-" | "T" | "F" | "N/A"
+  | "⏳";
 
 export type CertificateStatus =
   | "valid"
@@ -21,6 +23,8 @@ export interface CertificateResult {
   issuer?: string;
   totalValidityDays?: number;
   percentRemaining?: number;
+  protocols?: string[];
+  vulnerabilities?: string[];
   checkedAt: string;
   error?: string;
 }
