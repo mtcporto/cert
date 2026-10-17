@@ -4,13 +4,11 @@ import { useState, useCallback, useEffect } from "react";
 import type { CertificateResult, Domain } from "@/types";
 
 const DEFAULT_DOMAINS: string[] = [
-  "google.com",
-  "github.com",
-  "vercel.com",
-  "cloudflare.com",
-  "microsoft.com",
-  "apple.com",
-  "amazon.com",
+  "vivajoaopessoa.com",
+  "kindredveil.com",
+  "imobiliariapenaareia.com.br",
+  "nuvemmarketing.com",
+  "ride4x4.com",
 ];
 
 export function useCertificates() {

@@ -1,0 +1,13 @@
+name = "cert-ssl-proxy"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[[observability.enabled]]
+  logs = true
+  metrics = true
+
+[vars]
+  API_NAME = "SSL Labs Proxy"
+
+[[routes]]
+  pattern = "cert-proxy.mtcporto.workers.dev/analyze*"
