@@ -224,18 +224,20 @@ export function useCertificates() {
     setError(null);
     setActiveDomain(null);
 
-    // 1. CARREGA CACHE DO BANCO para todos os domínios
-    const cachedResults: CertificateResult[] = [];
-    const domainsToCheck: string[] = [];
+    // 1. DEFINIR PLACEHOLDERS IMEDIATAMENTE para todos os domínios
+    // Isso faz os cards aparecerem instantaneamente na tela
+    const initialPlaceholders = domains.map((d) => makePendingResult(d));
+    setResults(initialPlaceholders);
 
-    for (const domain of domains) {
+    // 2. BUSCAR CACHE DO BANCO EM PARALELO para todos os domínios
+    const cachePromises = domains.map(async (domain) => {
       try {
         const res = await fetch(`/api/certs?domain=${encodeURIComponent(domain)}`);
         if (res.ok) {
           const data: any = await res.json();
           const check = data.check;
           if (check && isCacheValid(check)) {
-            cachedResults.push({
+            return {
               domain: check.domain,
               grade: check.grade,
               status: check.status,
@@ -273,21 +275,36 @@ export function useCertificates() {
               checkedAt: check.checkedAt,
               nextCheckAt: check.nextCheckAt,
               cached: true,
-            });
-            continue;
+            };
           }
         }
       } catch {
         // ignore
       }
-      domainsToCheck.push(domain);
-    }
+      return null;
+    });
 
-    // Define resultados iniciais: cache + pendentes para os que precisam verificar
-    const pendingPlaceholders = domainsToCheck.map((d) => makePendingResult(d));
-    setResults([...cachedResults, ...pendingPlaceholders]);
+    const cacheResults = await Promise.all(cachePromises);
 
-    // 2. VERIFICA EM BACKGROUND apenas os domínios que precisam
+    // Atualizar resultados com cache válido
+    cacheResults.forEach((check) => {
+      if (check) {
+        setResults((prev) => {
+          const exists = prev.find((r) => r.domain === check.domain);
+          if (exists) {
+            return prev.map((r) => (r.domain === check.domain ? check : r));
+          }
+          return [...prev, check];
+        });
+      }
+    });
+
+    // 3. IDENTIFICAR DOMÍNIOS QUE PRECISAM DE VERIFICAÇÃO NOVA
+    const domainsToCheck = domains.filter(
+      (d) => !cacheResults.find((c) => c?.domain === d)
+    );
+
+    // 4. VERIFICA EM BACKGROUND apenas os domínios que precisam
     const batchSize = 3;
     const queue = [...domainsToCheck];
     const active = new Set<string>();
