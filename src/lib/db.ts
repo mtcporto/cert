@@ -122,7 +122,17 @@ function createDbClient() {
   const authToken = process.env.TURSO_AUTH_TOKEN;
 
   if (url && authToken) {
-    return createClient({ url, authToken });
+    const tursoClient = createClient({ url, authToken });
+    return {
+      execute: async (sql: string, params?: any[]) => {
+        try {
+          return await tursoClient.execute(sql, params);
+        } catch (error) {
+          console.error('Turso error, falling back to memory:', error);
+          return mockExecute(sql, params);
+        }
+      },
+    } as any;
   }
 
   return {
