@@ -331,6 +331,13 @@ export function useCertificates() {
     processQueue();
   }, [domains, analyzeDomain]);
 
+  // Dispara a verificação inicial ao carregar a página
+  useEffect(() => {
+    if (domains.length > 0 && results.length === 0 && !isLoading) {
+      runAnalysis();
+    }
+  }, [domains, results.length, isLoading, runAnalysis]);
+
   const refresh = useCallback(() => {
     // Força nova verificação ignorando cache
     setResults([]);
