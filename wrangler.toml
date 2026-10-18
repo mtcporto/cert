@@ -1,13 +1,11 @@
-name = "cert-ssl-proxy"
-main = "worker.js"
-compatibility_date = "2026-01-01"
+name = "cert-ssl-api-d1"
+main = "worker-d1.js"
+compatibility_date = "2026-10-18"
 
-[[observability.enabled]]
-  logs = true
-  metrics = true
+[[d1_databases]]
+  binding = "cert_ssl_db_d1"
+  database_name = "cert-ssl-db-d1"
+  database_id = "a4c9b95a-f192-4e77-8b99-93b3f8a05faf"
 
 [vars]
-  API_NAME = "SSL Labs Proxy"
-
-[[routes]]
-  pattern = "cert-proxy.mtcporto.workers.dev/analyze*"
+  API_NAME = "CertMonitor SSL Labs + D1"

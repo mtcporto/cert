@@ -11,6 +11,9 @@ const DEFAULT_DOMAINS: string[] = [
   "ride4x4.com",
 ];
 
+// Backend: Cloudflare Worker com D1
+const API_BASE = "https://cert-ssl-api-d1.mosaicoworkers.workers.dev";
+
 function makePendingResult(domain: string): CertificateResult {
   return {
     domain,
@@ -40,7 +43,7 @@ export function useCertificates() {
 
   const loadDomains = useCallback(async () => {
     try {
-      const res = await fetch("/api/domains");
+      const res = await fetch(`${API_BASE}/domains`);
       if (res.ok) {
         const data = await res.json();
         if (data.domains && data.domains.length > 0) {
@@ -61,7 +64,7 @@ export function useCertificates() {
 
   const analyzeDomain = useCallback(async (domain: string): Promise<CertificateResult> => {
     try {
-      const res = await fetch(`/api/analyze?host=${encodeURIComponent(domain)}`);
+      const res = await fetch(`${API_BASE}/analyze?host=${encodeURIComponent(domain)}`);
       if (!res.ok) throw new Error("Falha na análise");
       const data: any = await res.json();
 
@@ -175,9 +178,9 @@ export function useCertificates() {
         cached: false,
       };
 
-      // Salva no backend
+      // Salva no backend (Worker D1)
       try {
-        await fetch("/api/certs", {
+        await fetch(`${API_BASE}/certs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -224,15 +227,14 @@ export function useCertificates() {
     setError(null);
     setActiveDomain(null);
 
-    // 1. DEFINIR PLACEHOLDERS IMEDIATAMENTE para todos os domínios
-    // Isso faz os cards aparecerem instantaneamente na tela
+    // 1. DEFINIR PLACEHOLDERS IMEDIATAMENTE
     const initialPlaceholders = domains.map((d) => makePendingResult(d));
     setResults(initialPlaceholders);
 
-    // 2. BUSCAR CACHE DO BANCO EM PARALELO para todos os domínios
+    // 2. BUSCAR CACHE EM PARALELO
     const cachePromises = domains.map(async (domain) => {
       try {
-        const res = await fetch(`/api/certs?domain=${encodeURIComponent(domain)}`);
+        const res = await fetch(`${API_BASE}/certs?domain=${encodeURIComponent(domain)}`);
         if (res.ok) {
           const data: any = await res.json();
           const check = data.check;
@@ -272,8 +274,8 @@ export function useCertificates() {
               vulnerabilities: check.vulnerabilities
                 ? JSON.parse(check.vulnerabilities)
                 : [],
-              checkedAt: check.checkedAt,
-              nextCheckAt: check.nextCheckAt,
+              checkedAt: check.checked_at,
+              nextCheckAt: check.next_check_at,
               cached: true,
             };
           }
@@ -286,7 +288,6 @@ export function useCertificates() {
 
     const cacheResults = await Promise.all(cachePromises);
 
-    // Atualizar resultados com cache válido
     cacheResults.forEach((check) => {
       if (check) {
         setResults((prev) => {
@@ -299,12 +300,12 @@ export function useCertificates() {
       }
     });
 
-    // 3. IDENTIFICAR DOMÍNIOS QUE PRECISAM DE VERIFICAÇÃO NOVA
+    // 3. DOMÍNIOS QUE PRECISAM DE VERIFICAÇÃO
     const domainsToCheck = domains.filter(
       (d) => !cacheResults.find((c) => c?.domain === d)
     );
 
-    // 4. VERIFICA EM BACKGROUND apenas os domínios que precisam
+    // 4. VERIFICA EM BACKGROUND
     const batchSize = 3;
     const queue = [...domainsToCheck];
     const active = new Set<string>();
@@ -356,7 +357,6 @@ export function useCertificates() {
   }, [domains, results.length, isLoading, runAnalysis]);
 
   const refresh = useCallback(() => {
-    // Força nova verificação ignorando cache
     setResults([]);
     runAnalysis();
   }, [runAnalysis]);
