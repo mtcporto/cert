@@ -26,6 +26,8 @@ export interface CertificateResult {
   protocols?: string[];
   vulnerabilities?: string[];
   checkedAt: string;
+  nextCheckAt?: string;
+  cached?: boolean;
   error?: string;
 }
 

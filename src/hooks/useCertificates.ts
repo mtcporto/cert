@@ -24,6 +24,13 @@ function makePendingResult(domain: string): CertificateResult {
   };
 }
 
+function isCacheValid(check: any): boolean {
+  if (!check?.nextCheckAt) return false;
+  const now = new Date().getTime();
+  const next = new Date(check.nextCheckAt).getTime();
+  return next > now;
+}
+
 export function useCertificates() {
   const [results, setResults] = useState<CertificateResult[]>([]);
   const [domains, setDomains] = useState<string[]>(DEFAULT_DOMAINS);
@@ -118,7 +125,6 @@ export function useCertificates() {
             }
           }
 
-          // Extrair protocolos e vulnerabilidades dos endpoints
           if (endpoint?.details) {
             const details: any = endpoint.details;
             if (details.protocols) {
@@ -166,6 +172,7 @@ export function useCertificates() {
         protocols,
         vulnerabilities,
         checkedAt: new Date().toISOString(),
+        cached: false,
       };
 
       // Salva no backend
@@ -204,6 +211,7 @@ export function useCertificates() {
         protocols: [],
         vulnerabilities: [],
         checkedAt: new Date().toISOString(),
+        cached: false,
         error: err.message,
       };
     }
@@ -216,12 +224,72 @@ export function useCertificates() {
     setError(null);
     setActiveDomain(null);
 
-    // CRIA PLACEHOLDERS IMEDIATOS para todos os domínios
-    const initialPlaceholders = domains.map((d) => makePendingResult(d));
-    setResults(initialPlaceholders);
+    // 1. CARREGA CACHE DO BANCO para todos os domínios
+    const cachedResults: CertificateResult[] = [];
+    const domainsToCheck: string[] = [];
 
+    for (const domain of domains) {
+      try {
+        const res = await fetch(`/api/certs?domain=${encodeURIComponent(domain)}`);
+        if (res.ok) {
+          const data: any = await res.json();
+          const check = data.check;
+          if (check && isCacheValid(check)) {
+            cachedResults.push({
+              domain: check.domain,
+              grade: check.grade,
+              status: check.status,
+              statusText:
+                check.status === "valid"
+                  ? "Certificado válido (cache)"
+                  : check.status === "expired"
+                    ? "Certificado expirado (cache)"
+                    : check.status === "expiring_soon"
+                      ? "Expirando em breve (cache)"
+                      : check.status === "error"
+                        ? "Erro na análise (cache)"
+                        : "Aguardando análise",
+              icon: check.status === "valid" ? "check-circle" : "alert-circle",
+              statusClass: "",
+              validity:
+                check.validityDays !== undefined
+                  ? check.validityDays < 0
+                    ? "Expirado"
+                    : check.validityDays === 0
+                      ? "Expira hoje"
+                      : check.validityDays === 1
+                        ? "1 dia"
+                        : `${check.validityDays} dias`
+                  : "Verificando...",
+              validityDays: check.validityDays,
+              expiryDate: check.expiryDate,
+              issuer: check.issuer,
+              totalValidityDays: check.totalValidityDays,
+              percentRemaining: check.percentRemaining,
+              protocols: check.protocols ? JSON.parse(check.protocols) : [],
+              vulnerabilities: check.vulnerabilities
+                ? JSON.parse(check.vulnerabilities)
+                : [],
+              checkedAt: check.checkedAt,
+              nextCheckAt: check.nextCheckAt,
+              cached: true,
+            });
+            continue;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      domainsToCheck.push(domain);
+    }
+
+    // Define resultados iniciais: cache + pendentes para os que precisam verificar
+    const pendingPlaceholders = domainsToCheck.map((d) => makePendingResult(d));
+    setResults([...cachedResults, ...pendingPlaceholders]);
+
+    // 2. VERIFICA EM BACKGROUND apenas os domínios que precisam
     const batchSize = 3;
-    const queue = [...domains];
+    const queue = [...domainsToCheck];
     const active = new Set<string>();
 
     const processQueue = async () => {
@@ -264,6 +332,7 @@ export function useCertificates() {
   }, [domains, analyzeDomain]);
 
   const refresh = useCallback(() => {
+    // Força nova verificação ignorando cache
     setResults([]);
     runAnalysis();
   }, [runAnalysis]);

@@ -1,11 +1,73 @@
 import { NextResponse } from "next/server";
 import { initDb, query } from "@/lib/db";
 
-export async function GET() {
+function calcNextCheckAt(validityDays: number | null, status: string): string | null {
+  const now = new Date();
+  let daysToAdd: number;
+
+  if (status === "expired") {
+    daysToAdd = 0; // verificar imediatamente
+  } else if (status === "error") {
+    daysToAdd = 1; // tentar de novo em 1 dia
+  } else if (status === "pending" || status === "timeout") {
+    daysToAdd = 1;
+  } else if (validityDays !== null && validityDays !== undefined) {
+    if (validityDays <= 30) {
+      daysToAdd = 1; // expirando em breve: verificar todo dia
+    } else if (validityDays <= 90) {
+      daysToAdd = 3; // validade média: verificar a cada 3 dias
+    } else {
+      daysToAdd = 7; // validade longa: verificar uma vez por semana (check de segurança)
+    }
+  } else {
+    daysToAdd = 7;
+  }
+
+  const next = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+  return next.toISOString();
+}
+
+export async function GET(req: Request) {
   try {
     await initDb();
+    const { searchParams } = new URL(req.url);
+    const domain = searchParams.get("domain");
+
+    if (domain) {
+      // Buscar o check mais recente de um domínio específico
+      const result = await query(
+        `SELECT domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, raw_response, checked_at
+         FROM certificate_checks
+         WHERE domain = ?
+         ORDER BY checked_at DESC
+         LIMIT 1`,
+        [domain]
+      );
+      const rows: any[] = result.rows as any[];
+      if (rows.length === 0) {
+        return NextResponse.json({ check: null });
+      }
+      const row = rows[0];
+      return NextResponse.json({
+        check: {
+          domain: row.domain,
+          grade: row.grade,
+          status: row.status,
+          validityDays: row.validity_days,
+          expiryDate: row.expiry_date,
+          issuer: row.issuer,
+          totalValidityDays: row.total_validity_days,
+          percentRemaining: row.percent_remaining,
+          nextCheckAt: row.next_check_at,
+          checkedAt: row.checked_at,
+          rawResponse: row.raw_response,
+        },
+      });
+    }
+
+    // Listagem geral
     const result = await query(`
-      SELECT domain, grade, status, validity_days, expiry_date, issuer, checked_at
+      SELECT domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, checked_at
       FROM certificate_checks
       ORDER BY checked_at DESC
       LIMIT 100
@@ -18,6 +80,9 @@ export async function GET() {
       validityDays: row.validity_days,
       expiryDate: row.expiry_date,
       issuer: row.issuer,
+      totalValidityDays: row.total_validity_days,
+      percentRemaining: row.percent_remaining,
+      nextCheckAt: row.next_check_at,
       checkedAt: row.checked_at,
     }));
     return NextResponse.json({ checks });
@@ -42,6 +107,8 @@ export async function POST(req: Request) {
       issuer,
       totalValidityDays,
       percentRemaining,
+      protocols,
+      vulnerabilities,
       rawResponse,
     } = body;
 
@@ -49,10 +116,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "domain is required" }, { status: 400 });
     }
 
+    const nextCheckAt = calcNextCheckAt(validityDays ?? null, status);
+
     await query(
       `INSERT INTO certificate_checks
-       (domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, raw_response)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, raw_response)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         domain,
         grade ?? null,
@@ -62,11 +131,12 @@ export async function POST(req: Request) {
         issuer ?? null,
         totalValidityDays ?? null,
         percentRemaining ?? null,
+        nextCheckAt,
         rawResponse ?? null,
       ]
     );
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, nextCheckAt });
   } catch (error: any) {
     return NextResponse.json(
       { error: "Erro ao salvar verificação", detail: error.message },

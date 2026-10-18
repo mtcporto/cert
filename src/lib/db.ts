@@ -53,7 +53,8 @@ function mockExecute(sql: string, params?: any[]) {
       issuer: params?.[5],
       total_validity_days: params?.[6],
       percent_remaining: params?.[7],
-      raw_response: params?.[8],
+      next_check_at: params?.[8],
+      raw_response: params?.[9],
       checked_at: new Date().toISOString(),
     };
     memoryChecks.push(check);
@@ -61,6 +62,36 @@ function mockExecute(sql: string, params?: any[]) {
   }
 
   if (s.includes("FROM certificate_checks")) {
+    let querySql = s;
+    let paramsFinal = params;
+
+    // Suporte a filtro por domínio: WHERE domain = ?
+    const domainMatch = s.match(/WHERE\s+domain\s*=\s*\?/i);
+    if (domainMatch) {
+      const domainParam = params?.[0];
+      const filtered = memoryChecks.filter((c) => c.domain === domainParam);
+      const limitMatch = s.match(/LIMIT\s+(\d+)/i);
+      const limit = limitMatch ? parseInt(limitMatch[1]) : 1;
+      const rows = filtered
+        .slice()
+        .reverse()
+        .slice(0, limit)
+        .map((c) => ({
+          domain: c.domain,
+          grade: c.grade,
+          status: c.status,
+          validity_days: c.validity_days,
+          expiry_date: c.expiry_date,
+          issuer: c.issuer,
+          total_validity_days: c.total_validity_days,
+          percent_remaining: c.percent_remaining,
+          next_check_at: c.next_check_at,
+          raw_response: c.raw_response,
+          checked_at: c.checked_at,
+        }));
+      return { rows, rowsAffected: rows.length };
+    }
+
     const limitMatch = s.match(/LIMIT\s+(\d+)/i);
     const limit = limitMatch ? parseInt(limitMatch[1]) : 100;
     const rows = memoryChecks
@@ -74,6 +105,10 @@ function mockExecute(sql: string, params?: any[]) {
         validity_days: c.validity_days,
         expiry_date: c.expiry_date,
         issuer: c.issuer,
+        total_validity_days: c.total_validity_days,
+        percent_remaining: c.percent_remaining,
+        next_check_at: c.next_check_at,
+        raw_response: c.raw_response,
         checked_at: c.checked_at,
       }));
     return { rows, rowsAffected: rows.length };
@@ -120,6 +155,7 @@ export async function initDb() {
       issuer TEXT,
       total_validity_days INTEGER,
       percent_remaining INTEGER,
+      next_check_at TEXT,
       raw_response TEXT,
       checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -128,6 +164,10 @@ export async function initDb() {
 
   await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_cert_checks_domain ON certificate_checks(domain)
+  `);
+
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_cert_checks_next_check ON certificate_checks(next_check_at)
   `);
 
   await db.execute(`

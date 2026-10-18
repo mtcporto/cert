@@ -44,6 +44,7 @@ export function DomainCard({ result, onSelect }: DomainCardProps) {
         <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusColor(result.status)}`}>
           <Icon className={`w-3 h-3 ${isPending ? "animate-spin" : ""}`} />
           {result.statusText}
+          {result.cached && <span className="text-[10px] opacity-70 ml-1">cache</span>}
         </span>
       </div>
 
