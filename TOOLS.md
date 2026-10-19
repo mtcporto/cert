@@ -1,137 +1,69 @@
-# 🛠️ Configuração das Ferramentas
+# 🛠️ Ferramentas e Infraestrutura — CertMonitor
 
-Este projeto utiliza **GitHub, Vercel, Cloudflare e Turso**. Abaixo o passo a passo para configurar cada uma.
+Guia operacional rápido para gerenciamento da infraestrutura do CertMonitor.
 
 ---
 
-## 1. GitHub (Código-fonte)
+## 1. GitHub (Controle de Versão e CI/CD)
 
-O código está hospedado em: https://github.com/mtcporto/cert
-
-Cada push na branch `main` dispara o deploy automático na Vercel.
+- **Repositório:** [https://github.com/mtcporto/cert](https://github.com/mtcporto/cert)
+- Cada push na branch `main` executa a validação e dispara automaticamente o deploy da interface na Vercel.
 
 ```bash
 git add .
-git commit -m "sua mensagem"
+git commit -m "feat/fix: descrição da alteração"
 git push origin main
 ```
 
 ---
 
-## 2. Vercel (Hospedagem Frontend)
+## 2. Vercel (Hospedagem Frontend Next.js)
 
-URL da aplicação: https://cert-next-6rsq7c6hj-marco-portos-projects.vercel.app
+- **URL de Produção:** [https://cert-next-seven.vercel.app/](https://cert-next-seven.vercel.app/)
+- O frontend consome exclusivamente a API do Cloudflare Worker através da variável pública de ambiente.
 
-### Variáveis de ambiente necessárias na Vercel:
-
-Vá em **Vercel Dashboard → Projeto → Settings → Environment Variables** e adicione:
-
-| Variável | Valor | Descrição |
-|----------|-------|-----------|
-| `TURSO_DATABASE_URL` | `libsql://cert-ssl-db-seu-org.turso.io` | URL do banco Turso |
-| `TURSO_AUTH_TOKEN` | `seu_token_aqui` | Token de acesso do Turso |
-
-Após adicionar, faça um redeploy:
-```bash
-vercel --prod
-```
+### Variáveis de ambiente configuradas na Vercel:
+| Variável | Valor Recomendado | Finalidade |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE` | `https://cert-ssl-api-d1.mosaicoworkers.workers.dev` | URL base do Cloudflare Worker backend |
 
 ---
 
-## 3. Turso (Banco de Dados Edge / SQLite)
+## 3. Cloudflare Worker & D1 Database
 
-O Turso armazena os domínios e o histórico de verificações de certificados.
+O backend e o banco de dados rodam na Cloudflare Edge.
 
-### Passos de configuração:
+- **Nome do Worker:** `cert-ssl-api-d1`
+- **Banco D1:** `cert-ssl-db-d1` (Database ID: `0ec35312-d8df-4a65-8dbd-0226c6d0422c`)
+- **Configuração:** `wrangler.toml`
+
+### Comandos de Operação:
 
 ```bash
-# 1. Login no Turso
-turso auth login
+# 1. Login no Cloudflare (caso necessário)
+npx wrangler login
 
-# 2. Criar o banco de dados
-turso db create cert-ssl-db
+# 2. Deploy do Worker e dos Cron Triggers
+npx wrangler deploy
 
-# 3. Obter a URL do banco
-turso db show cert-ssl-db
-# Anote a URL (ex: libsql://cert-ssl-db-xxx.turso.io)
+# 3. Aplicar schema D1 remotamente
+npx wrangler d1 execute cert-ssl-db-d1 --remote --file=./d1-schema.sql
 
-# 4. Criar token de acesso
-turso db tokens create cert-ssl-db
-# Anote o token gerado
-```
+# 4. Configurar ou atualizar o ADMIN_TOKEN
+npx wrangler secret put ADMIN_TOKEN
 
-### Adicionar ao .env.local (desenvolvimento):
-
-```env
-TURSO_DATABASE_URL=libsql://cert-ssl-db-seu-org.turso.io
-TURSO_AUTH_TOKEN=seu_token_aqui
+# 5. Consultar logs em tempo real
+npx wrangler tail
 ```
 
 ---
 
-## 4. Cloudflare Worker (Proxy CORS SSL Labs)
+## 4. Cron Triggers (Varredura Autônoma)
 
-O worker faz o proxy para a API `api.ssllabs.com` evitando problemas de CORS no frontend.
-
-### Arquivos do worker:
-- `worker.js` — código do worker
-- `wrangler.toml` — configuração do Cloudflare
-
-### Deploy do worker:
-
+O worker possui um gatilho cron programado para cada 15 minutos:
+- Expressão: `*/15 * * * *`
+- Função: Avalia domínios cujo `next_check_at` expirou e agenda novas análises na SSL Labs respeitando cotas da API.
+- Execução manual de teste:
 ```bash
-# 1. Instalar wrangler (se não tiver)
-npm install -g wrangler
-
-# 2. Login no Cloudflare
-wrangler login
-
-# 3. Fazer deploy do worker
-wrangler deploy
-```
-
-Após o deploy, anote a URL gerada (ex: `https://cert-ssl-proxy.seu-subdominio.workers.dev`).
-
-### Atualizar a API route para usar o worker:
-
-Em `src/app/api/analyze/route.ts`, altere a `SSL_LABS_API` para apontar para o seu worker:
-
-```typescript
-const SSL_LABS_API = "https://seu-worker.workers.dev/analyze";
-```
-
----
-
-## 5. Domínios Monitorados
-
-Os seguintes domínios estão configurados como padrão para monitoramento:
-
-| # | Domínio |
-|---|---------|
-| 1 | vivajoaopessoa.com |
-| 2 | kindredveil.com |
-| 3 | imobiliariapenaareia.com.br |
-| 4 | nuvemmarketing.com |
-| 5 | ride4x4.com |
-
-Você pode adicionar, remover ou editar domínios através da interface da aplicação (botão "Gerenciar Domínios").
-
----
-
-## Resumo do Fluxo
-
-```
-Usuário acessa Vercel
-    ↓
-Next.js frontend (localhost:3000 ou Vercel)
-    ↓
-API Route /api/analyze (Next.js)
-    ↓
-Cloudflare Worker (proxy CORS)
-    ↓
-SSL Labs API (Qualys)
-    ↓
-Resultado salvo no Turso (banco)
-    ↓
-Exibido no dashboard
+curl -X POST https://cert-ssl-api-d1.mosaicoworkers.workers.dev/cron/run
 ```
