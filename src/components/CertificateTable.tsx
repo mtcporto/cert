@@ -1,3 +1,5 @@
+"use client";
+
 import { useState } from "react";
 import {
   ChevronDown,
@@ -8,6 +10,7 @@ import {
   AlertCircle,
   AlertTriangle,
   Hourglass,
+  RefreshCw,
 } from "lucide-react";
 import { getGradeColor, getStatusColor, formatDaysRemaining } from "@/lib/utils";
 import type { CertificateResult } from "@/types";
@@ -16,7 +19,9 @@ interface CertificateTableProps {
   results: CertificateResult[];
   isLoading: boolean;
   onRefresh: () => void;
-  activeDomain?: string;
+  onSelect: (domain: string) => void;
+  onRefreshDomain?: (domain: string) => void;
+  activeDomain?: string | null;
 }
 
 const statusIconMap: Record<string, React.ElementType> = {
@@ -28,155 +33,218 @@ const statusIconMap: Record<string, React.ElementType> = {
   timeout: Hourglass,
 };
 
+type SortField = "domain" | "validityDays" | "grade";
+
 export function CertificateTable({
   results,
-  isLoading,
-  onRefresh,
+  onSelect,
+  onRefreshDomain,
   activeDomain,
 }: CertificateTableProps) {
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [sortField, setSortField] = useState<SortField>("validityDays");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
 
   const sortedResults = [...results].sort((a, b) => {
-    const aDays = a.validityDays ?? 0;
-    const bDays = b.validityDays ?? 0;
-    return sortDirection === "asc" ? aDays - bDays : bDays - aDays;
+    const dir = sortDirection === "asc" ? 1 : -1;
+    if (sortField === "domain") {
+      return a.domain.localeCompare(b.domain) * dir;
+    }
+    if (sortField === "grade") {
+      return a.grade.localeCompare(b.grade) * dir;
+    }
+    const aDays = a.validityDays ?? 9999;
+    const bDays = b.validityDays ?? 9999;
+    return (aDays - bDays) * dir;
   });
 
-  const toggleSort = () => {
-    setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+  const SortIndicator = ({ field }: { field: SortField }) => {
+    if (sortField !== field) return null;
+    return sortDirection === "asc" ? (
+      <ChevronUp className="w-3.5 h-3.5 inline ml-1" />
+    ) : (
+      <ChevronDown className="w-3.5 h-3.5 inline ml-1" />
+    );
   };
 
   return (
-    <div className="rounded-xl border border-card-border bg-card text-card-foreground shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-card-border bg-secondary/50">
-        <div className="flex items-center gap-2">
-          <Clock className="w-4 h-4 text-muted-foreground" />
-          <h2 className="font-semibold text-sm">Resultados da Verificação</h2>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={toggleSort}
-            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Ordenar por validade{" "}
-            {sortDirection === "desc" ? (
-              <ChevronUp className="w-3 h-3 ml-1" />
-            ) : (
-              <ChevronDown className="w-3 h-3 ml-1" />
-            )}
-          </button>
-          <button
-            onClick={onRefresh}
-            disabled={isLoading}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md border border-input bg-background hover:bg-secondary transition-colors disabled:opacity-50"
-          >
-            <Clock className={`w-3 h-3 ${isLoading ? "animate-spin" : ""}`} />
-            Atualizar
-          </button>
-        </div>
-      </div>
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-card-border bg-secondary/30">
-              <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Domínio
+            <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+              <th
+                onClick={() => handleSort("domain")}
+                className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-white select-none"
+              >
+                Domínio <SortIndicator field="domain" />
               </th>
-              <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                 Status
               </th>
-              <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider text-center">
-                Avaliação
+              <th
+                onClick={() => handleSort("grade")}
+                className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-center cursor-pointer hover:text-slate-900 dark:hover:text-white select-none"
+              >
+                Avaliação <SortIndicator field="grade" />
               </th>
-              <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                Validade
+              <th
+                onClick={() => handleSort("validityDays")}
+                className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider cursor-pointer hover:text-slate-900 dark:hover:text-white select-none"
+              >
+                Validade <SortIndicator field="validityDays" />
               </th>
-              <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider text-right">
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider hidden md:table-cell">
+                Emissor
+              </th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-right">
                 Ações
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-card-border">
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
             {sortedResults.map((result) => {
               const Icon = statusIconMap[result.status] || Clock;
               const isActive = result.domain === activeDomain;
+              const isPending = result.status === "pending";
+
               return (
                 <tr
                   key={result.domain}
-                  className={`
-                    transition-colors hover:bg-accent/50
-                    ${isActive ? "bg-primary/5" : ""}
-                  `}
+                  onClick={() => onSelect(result.domain)}
+                  className={`cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                    isActive ? "bg-indigo-50/40 dark:bg-indigo-950/20" : ""
+                  }`}
                 >
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-3">
+                  <td className="px-4 py-3.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-slate-900 dark:text-white">
+                        {result.domain}
+                      </span>
                       <a
                         href={`https://${result.domain}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm font-medium text-primary hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                        title="Abrir site"
                       >
-                        {result.domain}
+                        <ExternalLink className="w-3.5 h-3.5" />
                       </a>
-                      <ExternalLink
-                        className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                      />
                     </div>
                   </td>
-                  <td className="px-4 py-4">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${getStatusColor(result.status)}`}>
-                      <Icon className="w-3 h-3" />
+                  <td className="px-4 py-3.5">
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${getStatusColor(
+                        result.status
+                      )}`}
+                    >
+                      <Icon
+                        className={`w-3 h-3 ${isPending ? "animate-spin" : ""}`}
+                      />
                       {result.statusText}
                     </span>
                   </td>
-                  <td className="px-4 py-4 text-center">
-                    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-md text-xs font-bold ${getGradeColor(result.grade)}`}>
+                  <td className="px-4 py-3.5 text-center">
+                    <span
+                      className={`inline-flex items-center justify-center min-w-[2rem] px-2 py-0.5 rounded-md text-xs font-bold ${getGradeColor(
+                        result.grade
+                      )}`}
+                    >
                       {result.grade}
                     </span>
                   </td>
-                  <td className="px-4 py-4">
+                  <td className="px-4 py-3.5">
                     <div className="text-sm">
                       {result.validityDays !== undefined ? (
                         <>
-                          <span className={result.validityDays < 0 ? "text-rose-600" : result.validityDays <= 30 ? "text-amber-600" : "text-emerald-600"}>
+                          <span
+                            className={`font-medium ${
+                              result.validityDays < 0
+                                ? "text-rose-600 dark:text-rose-400"
+                                : result.validityDays <= 30
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-emerald-600 dark:text-emerald-400"
+                            }`}
+                          >
                             {formatDaysRemaining(result.validityDays)}
                           </span>
-                          <br />
-                          <span className="text-xs text-muted-foreground">
-                            até {new Date(result.expiryDate ?? result.checkedAt).toLocaleDateString("pt-BR")}
-                          </span>
+                          {result.expiryDate && (
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">
+                              até{" "}
+                              {new Date(result.expiryDate).toLocaleDateString(
+                                "pt-BR"
+                              )}
+                            </span>
+                          )}
                         </>
                       ) : (
-                        <span className="text-muted-foreground">{result.validity}</span>
+                        <span className="text-slate-500 dark:text-slate-400">
+                          {result.validity}
+                        </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-4 text-right">
-                    <button
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Ver detalhes
-                    </button>
+                  <td className="px-4 py-3.5 text-xs text-slate-500 dark:text-slate-400 hidden md:table-cell truncate max-w-[180px]">
+                    {result.issuer || "—"}
+                  </td>
+                  <td className="px-4 py-3.5 text-right">
+                    <div className="inline-flex items-center gap-3">
+                      {onRefreshDomain && (
+                        <button
+                          type="button"
+                          disabled={isPending}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRefreshDomain(result.domain);
+                          }}
+                          className="text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors disabled:opacity-40"
+                          title="Reverificar domínio"
+                        >
+                          <RefreshCw
+                            className={`w-3.5 h-3.5 ${
+                              isPending ? "animate-spin" : ""
+                            }`}
+                          />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelect(result.domain);
+                        }}
+                        className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                      >
+                        Detalhes
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
             })}
             {results.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                  Nenhum resultado disponível. Clique em "Atualizar" para iniciar a verificação.
+                <td
+                  colSpan={6}
+                  className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400"
+                >
+                  Nenhum resultado encontrado para os filtros aplicados.
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {results.length > 0 && (
-        <div className="px-4 py-3 border-t border-card-border bg-secondary/50 flex items-center justify-between text-xs text-muted-foreground">
-          <span>Exibindo {results.length} resultado(s)</span>
-          <span>Última atualização: {new Date().toLocaleTimeString("pt-BR")}</span>
-        </div>
-      )}
     </div>
   );
 }
+

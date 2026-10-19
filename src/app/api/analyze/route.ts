@@ -49,13 +49,24 @@ async function fetchWithRetry(
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const host = searchParams.get("host");
+  const startNew = searchParams.get("startNew") || "off";
 
   if (!host) {
     return NextResponse.json({ error: "host parameter is required" }, { status: 400 });
   }
 
   try {
-    const url = `${SSL_LABS_API}?host=${encodeURIComponent(host)}&startNew=off&all=on`;
+    const params = new URLSearchParams({
+      host,
+      all: "on",
+    });
+    if (startNew === "on") {
+      params.set("startNew", "on");
+    } else {
+      params.set("fromCache", "on");
+      params.set("maxAge", "24");
+    }
+    const url = `${SSL_LABS_API}?${params.toString()}`;
     const data = await fetchWithRetry(url);
 
     return NextResponse.json(data);
@@ -66,3 +77,4 @@ export async function GET(req: Request) {
     );
   }
 }
+

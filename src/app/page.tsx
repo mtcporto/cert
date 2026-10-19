@@ -1,17 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { RefreshCw, Plus } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  RefreshCw,
+  Plus,
+  Search,
+  LayoutGrid,
+  List,
+  X,
+  ShieldCheck,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StatusSummary } from "@/components/StatusSummary";
+import { StatusSummary, type FilterStatus } from "@/components/StatusSummary";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UrgentAlertBanner } from "@/components/UrgentAlertBanner";
 import { DomainCard } from "@/components/DomainCard";
+import { CertificateTable } from "@/components/CertificateTable";
 import { DomainDetailModal } from "@/components/DomainDetailModal";
 import { DomainManager } from "@/components/DomainManager";
 import { useCertificates } from "@/hooks/useCertificates";
-import type { CertificateResult } from "@/types";
 
 export default function Home() {
   const {
@@ -22,74 +30,86 @@ export default function Home() {
     error,
     activeDomain,
     refresh,
+    refreshDomain,
   } = useCertificates();
 
   const [domainModalOpen, setDomainModalOpen] = useState<boolean>(false);
-  const [newDomain, setNewDomain] = useState<string>("");
-  const [addError, setAddError] = useState<string>("");
-  const [selectedResult, setSelectedResult] = useState<CertificateResult | null>(null);
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [selectedStatus, setSelectedStatus] = useState<FilterStatus>("all");
+  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 
-  const summary = {
-    valid: results.filter((r) => r.status === "valid").length,
-    expiring: results.filter((r) => r.status === "expiring_soon").length,
-    expired: results.filter((r) => r.status === "expired").length,
-    errors: results.filter((r) => r.status === "error").length,
-    total: results.length,
-  };
+  const summary = useMemo(
+    () => ({
+      valid: results.filter((r) => r.status === "valid").length,
+      expiring: results.filter((r) => r.status === "expiring_soon").length,
+      expired: results.filter((r) => r.status === "expired").length,
+      errors: results.filter((r) => r.status === "error").length,
+      total: results.length,
+    }),
+    [results]
+  );
 
-  const handleQuickAdd = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAddError("");
-    const trimmed = newDomain.trim();
-    if (!trimmed) return;
+  const filteredResults = useMemo(() => {
+    return results.filter((r) => {
+      if (selectedStatus !== "all" && r.status !== selectedStatus) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const matchesDomain = r.domain.toLowerCase().includes(q);
+        const matchesIssuer = r.issuer?.toLowerCase().includes(q) ?? false;
+        const matchesGrade = r.grade.toLowerCase().includes(q);
+        if (!matchesDomain && !matchesIssuer && !matchesGrade) return false;
+      }
+      return true;
+    });
+  }, [results, selectedStatus, searchQuery]);
 
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])+$/.test(trimmed)) {
-      setAddError("Formato de domínio inválido.");
-      return;
-    }
-
-    if (domains.includes(trimmed)) {
-      setAddError("Este domínio já está na lista.");
-      return;
-    }
-
-    setDomains([...domains, trimmed]);
-    setNewDomain("");
-  };
+  const selectedResult = useMemo(
+    () => results.find((r) => r.domain === selectedDomain) ?? null,
+    [results, selectedDomain]
+  );
 
   const handleSelectDomain = (domain: string) => {
-    const result = results.find((r) => r.domain === domain);
-    setSelectedResult(result ?? null);
+    setSelectedDomain(domain);
     setDetailModalOpen(true);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
       {/* Aviso urgente no topo */}
-      <UrgentAlertBanner />
+      <UrgentAlertBanner
+        results={results}
+        onSelectDomain={handleSelectDomain}
+      />
 
       <nav className="sticky top-0 z-20 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-sm font-bold">
-                SSL
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
+                <ShieldCheck className="w-4 h-4" />
               </div>
               <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white">
                 CertMonitor
               </span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <ThemeToggle />
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setDomainModalOpen(true)}
-                className="hidden sm:block"
+                className="flex items-center gap-1.5"
               >
-                <Plus className="w-3.5 h-3.5 mr-1" /> Domínios
+                <Plus className="w-3.5 h-3.5" />
+                <span>Domínios</span>
+                <span className="ml-0.5 rounded-full bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                  {domains.length}
+                </span>
               </Button>
             </div>
           </div>
@@ -97,75 +117,158 @@ export default function Home() {
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-            Verificação de Certificados SSL
-          </h1>
-          <p className="text-slate-600 dark:text-slate-400">
-            Monitore a validade e segurança dos certificados SSL de múltiplos domínios.
-          </p>
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+              Verificação de Certificados SSL
+            </h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Monitore a validade, nota de segurança e protocolos dos certificados SSL de seus domínios.
+            </p>
+          </div>
+          {activeDomain && (
+            <div className="inline-flex items-center gap-2 text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 px-3 py-1.5 rounded-full">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              Verificando: <span className="font-semibold">{activeDomain}</span>
+            </div>
+          )}
         </div>
 
         {error && (
-          <div className="mb-6 rounded-lg bg-rose-50 border border-rose-200 p-4 text-rose-700 flex items-center gap-3">
-            <span className="w-4 h-4">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3" />
-              </svg>
-            </span>
+          <div className="mb-6 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 p-4 text-rose-700 dark:text-rose-300 flex items-center gap-3">
             <span>{error}</span>
           </div>
         )}
 
-        <StatusSummary summary={summary} />
+        <StatusSummary
+          summary={summary}
+          selectedStatus={selectedStatus}
+          onSelectStatus={setSelectedStatus}
+        />
 
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <span className="w-4 h-4 rounded-full bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-xs">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </span>
-            <h2 className="font-semibold text-lg text-slate-900 dark:text-white">Domínios</h2>
-          </div>
-          <Button
-            onClick={refresh}
-            disabled={isLoading}
-            className="flex items-center gap-2"
-          >
-            {isLoading ? (
-              <svg className="w-4 h-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={4}></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            )}
-            {isLoading ? "Verificando..." : "Atualizar"}
-          </Button>
-        </div>
-
-        {/* Grid de cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {results.length === 0 && (
-            <div className="col-span-full flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4 text-slate-400">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-                </svg>
-              </div>
-              <p className="text-slate-600 dark:text-slate-400 mb-4">Nenhum resultado disponível.</p>
-              <Button onClick={refresh} className="px-6 py-2">
-                Atualizar verificações
-              </Button>
+        {/* Barra de ferramentas: busca, filtros e modo de visualização */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div className="flex flex-1 items-center gap-2 max-w-md">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar domínio, emissor ou nota..."
+                className="pl-9 pr-8 bg-white dark:bg-slate-900"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                  aria-label="Limpar busca"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
-          )}
-          {results.map((result) => (
-            <DomainCard key={result.domain} result={result} onSelect={handleSelectDomain} />
-          ))}
+            {selectedStatus !== "all" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedStatus("all")}
+                className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white shrink-0"
+              >
+                Limpar filtro
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between sm:justify-end gap-2">
+            <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-0.5">
+              <button
+                type="button"
+                onClick={() => setViewMode("grid")}
+                className={`p-1.5 rounded-md transition-colors ${
+                  viewMode === "grid"
+                    ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400"
+                    : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                }`}
+                title="Visualização em grade"
+                aria-label="Visualização em grade"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("table")}
+                className={`p-1.5 rounded-md transition-colors ${
+                  viewMode === "table"
+                    ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400"
+                    : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                }`}
+                title="Visualização em tabela"
+                aria-label="Visualização em tabela"
+              >
+                <List className="w-4 h-4" />
+              </button>
+            </div>
+
+            <Button
+              onClick={refresh}
+              disabled={isLoading}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`}
+              />
+              {isLoading ? "Verificando..." : "Atualizar todos"}
+            </Button>
+          </div>
         </div>
+
+        {/* Conteúdo: Grid ou Tabela */}
+        {viewMode === "grid" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {filteredResults.length === 0 && (
+              <div className="col-span-full flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+                  {results.length === 0
+                    ? "Nenhum resultado disponível."
+                    : "Nenhum domínio corresponde aos filtros selecionados."}
+                </p>
+                {results.length === 0 ? (
+                  <Button onClick={refresh} className="px-6 py-2">
+                    Atualizar verificações
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSelectedStatus("all");
+                      setSearchQuery("");
+                    }}
+                  >
+                    Limpar filtros
+                  </Button>
+                )}
+              </div>
+            )}
+            {filteredResults.map((result) => (
+              <DomainCard
+                key={result.domain}
+                result={result}
+                onSelect={handleSelectDomain}
+                onRefreshDomain={refreshDomain}
+              />
+            ))}
+          </div>
+        ) : (
+          <CertificateTable
+            results={filteredResults}
+            isLoading={isLoading}
+            onRefresh={refresh}
+            onSelect={handleSelectDomain}
+            onRefreshDomain={refreshDomain}
+            activeDomain={activeDomain}
+          />
+        )}
 
         {domainModalOpen && (
           <DomainManager
@@ -180,8 +283,10 @@ export default function Home() {
           open={detailModalOpen}
           onClose={() => setDetailModalOpen(false)}
           result={selectedResult}
+          onRefreshDomain={refreshDomain}
         />
       </main>
     </div>
   );
 }
+

@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
 import { initDb, query } from "@/lib/db";
+import { parseSslLabsDetails } from "@/lib/utils";
 
 function calcNextCheckAt(validityDays: number | null, status: string): string | null {
   const now = new Date();
   let daysToAdd: number;
 
-  if (status === "expired") {
+  if (status === "expired" || status === "pending") {
     daysToAdd = 0; // verificar imediatamente
-  } else if (status === "error") {
+  } else if (status === "error" || status === "timeout") {
     daysToAdd = 1; // tentar de novo em 1 dia
-  } else if (status === "pending" || status === "timeout") {
-    daysToAdd = 1;
   } else if (validityDays !== null && validityDays !== undefined) {
     if (validityDays <= 30) {
       daysToAdd = 1; // expirando em breve: verificar todo dia
@@ -25,6 +24,25 @@ function calcNextCheckAt(validityDays: number | null, status: string): string | 
 
   const next = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
   return next.toISOString();
+}
+
+function mapCheckRow(row: any) {
+  const parsed = parseSslLabsDetails(row.raw_response);
+  return {
+    domain: row.domain,
+    grade: row.grade,
+    status: row.status,
+    validityDays: row.validity_days,
+    expiryDate: row.expiry_date,
+    issuer: row.issuer,
+    totalValidityDays: row.total_validity_days,
+    percentRemaining: row.percent_remaining,
+    nextCheckAt: row.next_check_at,
+    checkedAt: row.checked_at,
+    rawResponse: row.raw_response,
+    protocols: parsed.protocols,
+    vulnerabilities: parsed.vulnerabilities,
+  };
 }
 
 export async function GET(req: Request) {
@@ -47,44 +65,20 @@ export async function GET(req: Request) {
       if (rows.length === 0) {
         return NextResponse.json({ check: null });
       }
-      const row = rows[0];
       return NextResponse.json({
-        check: {
-          domain: row.domain,
-          grade: row.grade,
-          status: row.status,
-          validityDays: row.validity_days,
-          expiryDate: row.expiry_date,
-          issuer: row.issuer,
-          totalValidityDays: row.total_validity_days,
-          percentRemaining: row.percent_remaining,
-          nextCheckAt: row.next_check_at,
-          checkedAt: row.checked_at,
-          rawResponse: row.raw_response,
-        },
+        check: mapCheckRow(rows[0]),
       });
     }
 
     // Listagem geral
     const result = await query(`
-      SELECT domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, checked_at
+      SELECT domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, raw_response, checked_at
       FROM certificate_checks
       ORDER BY checked_at DESC
       LIMIT 100
     `);
     const rows: any[] = result.rows as any[];
-    const checks = rows.map((row) => ({
-      domain: row.domain,
-      grade: row.grade,
-      status: row.status,
-      validityDays: row.validity_days,
-      expiryDate: row.expiry_date,
-      issuer: row.issuer,
-      totalValidityDays: row.total_validity_days,
-      percentRemaining: row.percent_remaining,
-      nextCheckAt: row.next_check_at,
-      checkedAt: row.checked_at,
-    }));
+    const checks = rows.map(mapCheckRow);
     return NextResponse.json({ checks });
   } catch (error: any) {
     return NextResponse.json(
@@ -107,8 +101,6 @@ export async function POST(req: Request) {
       issuer,
       totalValidityDays,
       percentRemaining,
-      protocols,
-      vulnerabilities,
       rawResponse,
     } = body;
 
@@ -144,3 +136,4 @@ export async function POST(req: Request) {
     );
   }
 }
+
