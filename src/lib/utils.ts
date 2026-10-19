@@ -28,6 +28,18 @@ export function getGradeColor(grade: string): string {
   return colors[grade] || colors["N/A"];
 }
 
+export function parseIssuerName(cert: any): string | null {
+  if (!cert) return null;
+  if (cert.issuerO) return cert.issuerO;
+  if (cert.issuerCN) return cert.issuerCN;
+  const subject = cert.issuerSubject || "";
+  const o = subject.match(/(?:^|,\s*)O=("?)([^,"]+)\1/);
+  if (o) return o[2].trim();
+  const cn = subject.match(/(?:^|,\s*)CN=("?)([^,"]+)\1/);
+  if (cn) return cn[2].trim();
+  return cert.issuerLabel || null;
+}
+
 export function getStatusColor(status: string): string {
   const colors: Record<string, string> = {
     valid:
@@ -254,7 +266,7 @@ export function parseSslLabsDetails(
         keySize: mainCert.keySize,
         sigAlg: mainCert.sigAlg,
         issuerSubject:
-          mainCert.issuerLabel || mainCert.issuerO || mainCert.issuerCN || mainCert.issuerSubject,
+          parseIssuerName(mainCert) || mainCert.issuerSubject || "Desconhecido",
         sct: Boolean(mainCert.sct),
         chainCount: data.certs.length,
         chain: data.certs.map((c: any) => ({

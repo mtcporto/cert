@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { CertificateResult } from "@/types";
-import { formatDaysRemaining, parseSslLabsDetails } from "@/lib/utils";
+import { formatDaysRemaining, parseSslLabsDetails, parseIssuerName } from "@/lib/utils";
 
 const DEFAULT_DOMAINS: string[] = [
   "vivajoaopessoa.com",
@@ -277,7 +277,7 @@ export function useCertificates() {
             statusText = "Certificado válido";
           }
 
-          issuer = mainCert.issuerO || mainCert.issuerCN || "Desconhecido";
+          issuer = parseIssuerName(mainCert) || "Desconhecido";
 
           if (mainCert.notBefore) {
             const start = new Date(mainCert.notBefore).getTime();
@@ -324,7 +324,7 @@ export function useCertificates() {
                 : "Indisponível",
           validityDays,
           expiryDate,
-          issuer,
+          issuer: issuer || parsedDetails.certDetails?.issuerSubject,
           totalValidityDays,
           percentRemaining,
           protocols: parsedDetails.protocols,
@@ -340,31 +340,7 @@ export function useCertificates() {
           cached: false,
         };
 
-        // Salva no backend apenas quando a análise terminou (não cachear timeout incompleto)
-        if (certStatus !== "timeout") {
-          try {
-            await fetch(`${API_BASE}/certs`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                domain,
-                grade,
-                status: certStatus,
-                validityDays,
-                expiryDate,
-                issuer,
-                totalValidityDays,
-                percentRemaining,
-                protocols: parsedDetails.protocols,
-                vulnerabilities: parsedDetails.vulnerabilities,
-                rawResponse: JSON.stringify(data),
-              }),
-            });
-          } catch {
-            // ignore
-          }
-        }
-
+        // Gravação agora é realizada automaticamente pelo Worker no endpoint /analyze
         return result;
       } catch (err: any) {
         return {
