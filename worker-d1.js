@@ -260,6 +260,115 @@ async function isRegisteredDomain(env, host) {
   return Boolean(row);
 }
 
+async function getSslLabsInfo() {
+  try {
+    const res = await fetch('https://api.ssllabs.com/api/v3/info', {
+      headers: { Accept: 'application/json', 'User-Agent': 'CertMonitor/1.0' },
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.error('Failed to get SSL Labs info:', err);
+  }
+  return null;
+}
+
+async function runScheduledChecks(env) {
+  const nowIso = new Date().toISOString();
+  const summaryLog = { startedAt: nowIso, checked: [], skipped: null };
+
+  const query = `
+    SELECT d.domain, latest.status, latest.next_check_at
+    FROM domains d
+    LEFT JOIN (
+      SELECT c.domain, c.status, c.next_check_at, c.id
+      FROM certificate_checks c
+      INNER JOIN (
+        SELECT domain, MAX(id) AS max_id FROM certificate_checks GROUP BY domain
+      ) m ON c.id = m.max_id
+    ) latest ON d.domain = latest.domain
+    WHERE d.is_active = 1
+      AND (latest.id IS NULL OR latest.next_check_at IS NULL OR latest.next_check_at <= ?)
+    ORDER BY
+      CASE WHEN latest.id IS NULL THEN 0 ELSE 1 END,
+      latest.next_check_at ASC
+    LIMIT 3
+  `;
+
+  let dueDomains = [];
+  try {
+    const { results } = await env.cert_ssl_db_d1.prepare(query).bind(nowIso).all();
+    dueDomains = results || [];
+  } catch (e) {
+    console.error('[Cron] Falha ao consultar domínios pendentes:', e);
+    return { error: e.message };
+  }
+
+  if (dueDomains.length === 0) {
+    summaryLog.skipped = 'Nenhum domínio com verificação pendente';
+    return summaryLog;
+  }
+
+  // Verificar cota SSL Labs
+  const info = await getSslLabsInfo();
+  if (info) {
+    const current = Number(info.currentAssessments || 0);
+    const max = Number(info.maxAssessments || 25);
+    if (current >= max) {
+      summaryLog.skipped = `Cota SSL Labs em uso (${current}/${max})`;
+      return summaryLog;
+    }
+  }
+
+  for (const item of dueDomains) {
+    const host = item.domain;
+    try {
+      // 1. Tentar ler do cache SSL Labs (maxAge 24h)
+      let apiUrl = `https://api.ssllabs.com/api/v3/analyze?host=${encodeURIComponent(host)}&all=on&fromCache=on&maxAge=24`;
+      let res = await fetch(apiUrl, {
+        headers: { Accept: 'application/json', 'User-Agent': 'CertMonitor/1.0' },
+      });
+      let body = await res.text();
+      let data = null;
+      try {
+        data = JSON.parse(body);
+      } catch {
+        data = null;
+      }
+
+      // Se não há resultado aproveitável em cache, dispara nova análise
+      if (!data || (data.status !== 'READY' && data.status !== 'IN_PROGRESS' && data.status !== 'DNS')) {
+        apiUrl = `https://api.ssllabs.com/api/v3/analyze?host=${encodeURIComponent(host)}&all=on&startNew=on`;
+        res = await fetch(apiUrl, {
+          headers: { Accept: 'application/json', 'User-Agent': 'CertMonitor/1.0' },
+        });
+        body = await res.text();
+        try {
+          data = JSON.parse(body);
+        } catch {
+          data = null;
+        }
+      }
+
+      if (data) {
+        const summary = summarizeAnalysis(host, data);
+        if (summary) {
+          const nextCheckAt = await saveCheck(env, summary, body);
+          summaryLog.checked.push({ domain: host, grade: summary.grade, status: summary.status, nextCheckAt });
+        } else {
+          summaryLog.checked.push({ domain: host, sslLabsStatus: data.status, note: 'Em andamento na SSL Labs' });
+        }
+      }
+    } catch (err) {
+      console.error(`[Cron] Erro ao verificar ${host}:`, err);
+      summaryLog.checked.push({ domain: host, error: err.message });
+    }
+  }
+
+  return summaryLog;
+}
+
 // ============================================================
 // Worker
 // ============================================================
@@ -533,6 +642,24 @@ export default {
       }
     }
 
+    // ============================================================
+    // CRON DISPARADO MANUALMENTE (requer ADMIN_TOKEN)
+    // ============================================================
+    if (path === '/cron/run' && method === 'POST') {
+      if (!isAdmin(request, env)) {
+        return Response.json({ error: 'Unauthorized: admin token required' }, { status: 401, headers: corsHeaders });
+      }
+      const result = await runScheduledChecks(env);
+      return Response.json(result, { headers: corsHeaders });
+    }
+
     return Response.json({ error: 'Not found' }, { status: 404, headers: corsHeaders });
+  },
+
+  /**
+   * Cloudflare Cron Trigger (ex.: a cada 15 minutos)
+   */
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(runScheduledChecks(env));
   },
 };

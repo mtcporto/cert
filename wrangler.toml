@@ -9,3 +9,7 @@ compatibility_date = "2026-10-18"
 
 [vars]
   API_NAME = "CertMonitor SSL Labs + D1"
+
+[triggers]
+  crons = ["*/15 * * * *"]
+
