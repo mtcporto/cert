@@ -9,6 +9,7 @@ import {
   List,
   X,
   ShieldCheck,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +20,9 @@ import { DomainCard } from "@/components/DomainCard";
 import { CertificateTable } from "@/components/CertificateTable";
 import { DomainDetailView } from "@/components/DomainDetailView";
 import { DomainManager } from "@/components/DomainManager";
+import { DemoCasesModal } from "@/components/DemoCasesModal";
 import { useCertificates } from "@/hooks/useCertificates";
+import { CertificateResult } from "@/types";
 
 export default function Home() {
   const {
@@ -35,7 +38,9 @@ export default function Home() {
   } = useCertificates();
 
   const [domainModalOpen, setDomainModalOpen] = useState<boolean>(false);
+  const [demoModalOpen, setDemoModalOpen] = useState<boolean>(false);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const [activeDemoResult, setActiveDemoResult] = useState<CertificateResult | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedStatus, setSelectedStatus] = useState<FilterStatus>("all");
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
@@ -69,14 +74,20 @@ export default function Home() {
   }, [results, selectedStatus, searchQuery]);
 
   const selectedResult = useMemo(
-    () => results.find((r) => r.domain === selectedDomain) ?? null,
-    [results, selectedDomain]
+    () => activeDemoResult || (results.find((r) => r.domain === selectedDomain) ?? null),
+    [results, selectedDomain, activeDemoResult]
   );
 
   const handleSelectDomain = (domain: string) => {
+    setActiveDemoResult(null);
     setSelectedDomain(domain);
     loadDomainDetails(domain);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleBack = () => {
+    setSelectedDomain(null);
+    setActiveDemoResult(null);
   };
 
   return (
@@ -92,7 +103,7 @@ export default function Home() {
           <div className="flex items-center justify-between h-16">
             <button
               type="button"
-              onClick={() => setSelectedDomain(null)}
+              onClick={handleBack}
               className="flex items-center gap-2.5 cursor-pointer text-left"
             >
               <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
@@ -104,6 +115,15 @@ export default function Home() {
             </button>
 
             <div className="flex items-center gap-2 sm:gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDemoModalOpen(true)}
+                className="flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Cases Demo</span>
+              </Button>
               <ThemeToggle />
               <Button
                 variant="outline"
@@ -126,7 +146,7 @@ export default function Home() {
         {selectedResult ? (
           <DomainDetailView
             result={selectedResult}
-            onBack={() => setSelectedDomain(null)}
+            onBack={handleBack}
             onRefreshDomain={refreshDomain}
           />
         ) : (
@@ -293,6 +313,17 @@ export default function Home() {
             onSave={setDomains}
             onClose={() => setDomainModalOpen(false)}
             isLoading={isLoading}
+          />
+        )}
+
+        {demoModalOpen && (
+          <DemoCasesModal
+            onClose={() => setDemoModalOpen(false)}
+            onInspectDemo={(demoResult) => {
+              setSelectedDomain(null);
+              setActiveDemoResult(demoResult);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
           />
         )}
       </main>

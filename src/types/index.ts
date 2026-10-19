@@ -92,6 +92,7 @@ export interface CertificateResult {
   nextCheckAt?: string;
   cached?: boolean;
   error?: string;
+  rawResponse?: string;
 }
 
 export interface Domain {
