@@ -45,7 +45,8 @@ export default function Home() {
       valid: results.filter((r) => r.status === "valid").length,
       expiring: results.filter((r) => r.status === "expiring_soon").length,
       expired: results.filter((r) => r.status === "expired").length,
-      errors: results.filter((r) => r.status === "error").length,
+      insecure: results.filter((r) => r.status === "insecure").length,
+      errors: results.filter((r) => r.status === "error" || r.status === "pending").length,
       total: results.length,
     }),
     [results]

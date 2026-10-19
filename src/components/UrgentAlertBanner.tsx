@@ -32,6 +32,13 @@ export function UrgentAlertBanner({
           type: "error",
           message: "Certificado SSL expirado! Renovação imediata necessária.",
         });
+      } else if (r.status === "insecure") {
+        list.push({
+          id: `insecure-${r.domain}`,
+          domain: r.domain,
+          type: "error",
+          message: `${r.statusText} (Nota ${r.grade}).`,
+        });
       } else if (r.status === "expiring_soon") {
         list.push({
           id: `expiring-${r.domain}`,

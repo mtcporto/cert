@@ -359,8 +359,13 @@ export function DomainDetailView({
             </h2>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {ALL_KNOWN_PROTOCOLS.map((proto) => {
+          {supportedProtocols.length === 0 ? (
+            <div className="py-6 px-4 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 text-center">
+              Aguardando detalhamento de protocolos TLS da SSL Labs...
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {ALL_KNOWN_PROTOCOLS.map((proto) => {
               const isEnabled = supportedProtocols.some(
                 (p) => p.toUpperCase() === proto.name.toUpperCase()
               );
@@ -413,6 +418,7 @@ export function DomainDetailView({
               );
             })}
           </div>
+        )}
 
           {/* Recursos de Segurança (Forward Secrecy, HSTS, OCSP, ALPN) */}
           {featureChecks.length > 0 && (

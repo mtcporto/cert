@@ -1,11 +1,11 @@
-import { CheckCircle, AlertTriangle, Clock, AlertCircle } from "lucide-react";
+import { CheckCircle, AlertTriangle, Clock, AlertCircle, ShieldAlert } from "lucide-react";
 
-export type FilterStatus = "all" | "valid" | "expiring_soon" | "expired" | "error";
+export type FilterStatus = "all" | "valid" | "expiring_soon" | "expired" | "insecure" | "error";
 
 interface SummaryCardProps {
   label: string;
   value: number;
-  color: "emerald" | "amber" | "rose" | "slate";
+  color: "emerald" | "amber" | "rose" | "purple" | "slate";
   icon: React.ElementType;
   active?: boolean;
   onClick?: () => void;
@@ -26,6 +26,8 @@ function SummaryCard({
       "bg-amber-50/80 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800/70 dark:text-amber-300",
     rose:
       "bg-rose-50/80 border-rose-200 text-rose-800 dark:bg-rose-950/30 dark:border-rose-800/70 dark:text-rose-300",
+    purple:
+      "bg-purple-50/80 border-purple-200 text-purple-800 dark:bg-purple-950/30 dark:border-purple-800/70 dark:text-purple-300",
     slate:
       "bg-slate-100/80 border-slate-200 text-slate-800 dark:bg-slate-900/60 dark:border-slate-800 dark:text-slate-300",
   };
@@ -34,6 +36,7 @@ function SummaryCard({
     emerald: "bg-emerald-100 dark:bg-emerald-900/60",
     amber: "bg-amber-100 dark:bg-amber-900/60",
     rose: "bg-rose-100 dark:bg-rose-900/60",
+    purple: "bg-purple-100 dark:bg-purple-900/60",
     slate: "bg-slate-200/70 dark:bg-slate-800",
   };
 
@@ -41,6 +44,7 @@ function SummaryCard({
     emerald: "ring-2 ring-emerald-500 dark:ring-emerald-400",
     amber: "ring-2 ring-amber-500 dark:ring-amber-400",
     rose: "ring-2 ring-rose-500 dark:ring-rose-400",
+    purple: "ring-2 ring-purple-500 dark:ring-purple-400",
     slate: "ring-2 ring-indigo-500 dark:ring-indigo-400",
   };
 
@@ -70,6 +74,7 @@ export interface StatusSummaryProps {
     valid: number;
     expiring: number;
     expired: number;
+    insecure: number;
     errors: number;
     total: number;
   };
@@ -88,7 +93,7 @@ export function StatusSummary({
   };
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-6">
       <SummaryCard
         label="Certificados válidos"
         value={summary.valid}
@@ -114,7 +119,15 @@ export function StatusSummary({
         onClick={() => handleToggle("expired")}
       />
       <SummaryCard
-        label="Com erros"
+        label="Inseguros (T/M/F)"
+        value={summary.insecure}
+        color="purple"
+        icon={ShieldAlert}
+        active={selectedStatus === "insecure"}
+        onClick={() => handleToggle("insecure")}
+      />
+      <SummaryCard
+        label="Com erros / Pendentes"
         value={summary.errors}
         color="slate"
         icon={Clock}

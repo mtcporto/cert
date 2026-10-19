@@ -84,6 +84,37 @@ function calcNextCheckAt(status, validityDays) {
   return new Date(Date.now() + daysToAdd * DAY_MS).toISOString();
 }
 
+const GRADE_RANKS = {
+  'A+': 14,
+  A: 13,
+  'A-': 12,
+  'B+': 11,
+  B: 10,
+  'B-': 9,
+  'C+': 8,
+  C: 7,
+  'C-': 6,
+  D: 5,
+  E: 4,
+  F: 3,
+  M: 2,
+  T: 1,
+  'N/A': 0,
+};
+
+function resolveWorstGrade(endpoints) {
+  const grades = (endpoints || [])
+    .map((e) => e?.grade)
+    .filter((g) => typeof g === 'string' && g !== 'N/A' && GRADE_RANKS[g] !== undefined);
+  if (grades.length === 0) return 'N/A';
+  return grades.reduce(
+    (worst, cur) => (GRADE_RANKS[cur] < GRADE_RANKS[worst] ? cur : worst),
+    grades[0]
+  );
+}
+
+const INSECURE_GRADES = new Set(['T', 'M', 'F', 'C-', 'D', 'E']);
+
 /**
  * Resume uma resposta da SSL Labs no formato gravado em certificate_checks.
  * Retorna null quando a análise ainda não tem resultado aproveitável.
@@ -93,11 +124,12 @@ function summarizeAnalysis(domain, data) {
 
   const endpoints = Array.isArray(data.endpoints) ? data.endpoints : [];
   const certs = Array.isArray(data.certs) ? data.certs : [];
-  const endpoint = endpoints.find((e) => e.grade) || endpoints[0];
-  const grade = endpoint?.grade || 'N/A';
+  const worstGrade = resolveWorstGrade(endpoints);
+  const grade = worstGrade !== 'N/A' ? worstGrade : endpoints[0]?.grade || 'N/A';
+  const endpoint = endpoints.find((e) => e?.grade === grade) || endpoints[0];
 
   const isFinal = data.status === 'READY' || data.status === 'ERROR';
-  const hasPartial = certs.length > 0 && endpoints[0]?.grade;
+  const hasPartial = certs.length > 0 && grade !== 'N/A';
   if (!isFinal && !hasPartial) return null;
 
   const mainCert =
@@ -112,7 +144,16 @@ function summarizeAnalysis(domain, data) {
   if (mainCert?.notAfter) {
     validityDays = Math.floor((mainCert.notAfter - Date.now()) / DAY_MS);
     expiryDate = new Date(mainCert.notAfter).toISOString();
-    status = validityDays < 0 ? 'expired' : validityDays <= 30 ? 'expiring_soon' : 'valid';
+
+    if (validityDays < 0) {
+      status = 'expired';
+    } else if (INSECURE_GRADES.has(grade)) {
+      status = 'insecure';
+    } else if (validityDays <= 30) {
+      status = 'expiring_soon';
+    } else {
+      status = 'valid';
+    }
 
     if (mainCert.notBefore) {
       totalValidityDays = Math.floor((mainCert.notAfter - mainCert.notBefore) / DAY_MS);
@@ -124,7 +165,11 @@ function summarizeAnalysis(domain, data) {
       }
     }
   } else if (data.status === 'READY') {
-    status = endpoint?.statusMessage === 'Ready' && grade !== 'N/A' ? 'valid' : 'error';
+    if (INSECURE_GRADES.has(grade)) {
+      status = 'insecure';
+    } else {
+      status = endpoint?.statusMessage === 'Ready' && grade !== 'N/A' ? 'valid' : 'error';
+    }
   }
 
   return {
@@ -383,7 +428,7 @@ export default {
       try {
         const { results } = await env.cert_ssl_db_d1
           .prepare(
-            `SELECT c.domain, c.status, c.validity_days
+            `SELECT c.domain, c.grade, c.status, c.validity_days
              FROM certificate_checks c
              INNER JOIN (
                SELECT domain, MAX(id) AS max_id FROM certificate_checks GROUP BY domain
@@ -399,6 +444,13 @@ export default {
               domain: row.domain,
               type: 'error',
               message: 'Certificado SSL expirado! Renovação imediata necessária.',
+            });
+          } else if (row.status === 'insecure' || INSECURE_GRADES.has(row.grade)) {
+            alerts.push({
+              id: `insecure-${row.domain}`,
+              domain: row.domain,
+              type: 'error',
+              message: `Configuração de certificado SSL insegura ou não confiável (Nota ${row.grade || 'baixa'}).`,
             });
           } else if (
             row.status === 'expiring_soon' ||

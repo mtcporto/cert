@@ -1,11 +1,12 @@
 export type SslGrade =
-  | "A+" | "A" | "A-" | "B+" | "B" | "B-" | "C+" | "C" | "C-" | "T" | "F" | "N/A"
+  | "A+" | "A" | "A-" | "B+" | "B" | "B-" | "C+" | "C" | "C-" | "D" | "E" | "F" | "M" | "T" | "N/A"
   | "⏳";
 
 export type CertificateStatus =
   | "valid"
   | "expired"
   | "expiring_soon"
+  | "insecure"
   | "error"
   | "pending"
   | "timeout";

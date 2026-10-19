@@ -2,7 +2,13 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { CertificateResult } from "@/types";
-import { formatDaysRemaining, parseSslLabsDetails, parseIssuerName } from "@/lib/utils";
+import {
+  formatDaysRemaining,
+  parseSslLabsDetails,
+  parseIssuerName,
+  classifyCertificateStatus,
+  resolveWorstGrade,
+} from "@/lib/utils";
 
 const DEFAULT_DOMAINS: string[] = [
   "vivajoaopessoa.com",
@@ -100,23 +106,14 @@ function mapCachedCheckToResult(check: any): CertificateResult {
     }
   }
 
-  let status: CertificateResult["status"] = check.status || "valid";
-  if (currentValidityDays !== undefined && currentValidityDays !== null) {
-    if (currentValidityDays < 0) status = "expired";
-    else if (currentValidityDays <= 30) status = "expiring_soon";
-    else if (status !== "error") status = "valid";
-  }
-
-  const statusText =
-    status === "valid"
-      ? "Certificado válido"
-      : status === "expired"
-        ? "Certificado expirado"
-        : status === "expiring_soon"
-          ? "Expirando em breve"
-          : status === "error"
-            ? "Erro na análise"
-            : "Aguardando análise";
+  const classification = classifyCertificateStatus({
+    rawStatus: check.status,
+    grade: check.grade,
+    validityDays: currentValidityDays,
+    vulnerabilities,
+  });
+  const status = classification.status;
+  const statusText = classification.statusText;
 
   return {
     domain: check.domain,
@@ -243,13 +240,12 @@ export function useCertificates() {
           }
         }
 
-        const endpoint =
-          data?.endpoints?.find((e: any) => e.grade) || data?.endpoints?.[0];
-        const grade = (endpoint?.grade || "N/A") as CertificateResult["grade"];
+        const endpoints = Array.isArray(data?.endpoints) ? data.endpoints : [];
+        const grades = endpoints.map((e: any) => e.grade).filter(Boolean);
+        const worstGrade = resolveWorstGrade(grades);
+        const grade = (worstGrade !== "N/A" ? worstGrade : endpoints[0]?.grade || "N/A") as CertificateResult["grade"];
         const status = data?.status;
 
-        let certStatus: CertificateResult["status"] = "pending";
-        let statusText = "Análise em andamento";
         let validityDays: number | undefined;
         let expiryDate: string | undefined;
         let issuer: string | undefined;
@@ -265,23 +261,8 @@ export function useCertificates() {
         if (mainCert?.notAfter) {
           const expiryTs = mainCert.notAfter;
           const now = Date.now();
-          const daysRemaining = Math.floor(
-            (expiryTs - now) / (1000 * 60 * 60 * 24)
-          );
-          validityDays = daysRemaining;
+          validityDays = Math.floor((expiryTs - now) / (1000 * 60 * 60 * 24));
           expiryDate = new Date(expiryTs).toISOString();
-
-          if (daysRemaining < 0) {
-            certStatus = "expired";
-            statusText = "Certificado expirado";
-          } else if (daysRemaining <= 30) {
-            certStatus = "expiring_soon";
-            statusText = "Expirando em breve";
-          } else {
-            certStatus = "valid";
-            statusText = "Certificado válido";
-          }
-
           issuer = parseIssuerName(mainCert) || "Desconhecido";
 
           if (mainCert.notBefore) {
@@ -291,28 +272,22 @@ export function useCertificates() {
             if (totalValidityDays && totalValidityDays > 0) {
               percentRemaining = Math.max(
                 0,
-                Math.min(100, Math.round((daysRemaining / totalValidityDays) * 100))
+                Math.min(100, Math.round((validityDays / totalValidityDays) * 100))
               );
             }
           }
-        } else if (status === "READY") {
-          const valid = endpoint?.statusMessage === "Ready" && grade !== "N/A";
-          if (!valid) {
-            certStatus = "error";
-            statusText = endpoint?.statusMessage || "Certificado inválido";
-          } else {
-            certStatus = "valid";
-            statusText = "Certificado válido";
-          }
-        } else if (status === "ERROR") {
-          certStatus = "error";
-          statusText = data?.statusMessage || "Erro na análise";
-        } else {
-          certStatus = "timeout";
-          statusText = "Análise em processamento no SSL Labs";
         }
 
         const parsedDetails = parseSslLabsDetails(data, domain);
+
+        const classification = classifyCertificateStatus({
+          rawStatus: status,
+          grade,
+          validityDays,
+          vulnerabilities: parsedDetails.vulnerabilities,
+        });
+        const certStatus = classification.status;
+        const statusText = classification.statusText;
 
         const result: CertificateResult = {
           domain,

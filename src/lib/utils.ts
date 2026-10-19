@@ -1,3 +1,13 @@
+import type {
+  SslGrade,
+  CertificateStatus,
+  CertDetailedInfo,
+  CipherSuiteItem,
+  EndpointSummary,
+  HstsInfo,
+  SecurityCheckItem,
+} from "@/types";
+
 export function cn(...classes: (string | undefined | null | false)[]) {
   return classes.filter(Boolean).join(" ");
 }
@@ -7,6 +17,35 @@ export function formatDaysRemaining(days: number): string {
   if (days === 0) return "Expira hoje";
   if (days === 1) return "1 dia";
   return `${days} dias`;
+}
+
+export const GRADE_RANKS: Record<string, number> = {
+  "A+": 14,
+  A: 13,
+  "A-": 12,
+  "B+": 11,
+  B: 10,
+  "B-": 9,
+  "C+": 8,
+  C: 7,
+  "C-": 6,
+  D: 5,
+  E: 4,
+  F: 3,
+  M: 2,
+  T: 1,
+  "N/A": 0,
+};
+
+export function resolveWorstGrade(grades: (string | undefined | null)[]): SslGrade {
+  const valid = grades.filter(
+    (g): g is string => typeof g === "string" && g !== "N/A" && GRADE_RANKS[g] !== undefined
+  );
+  if (valid.length === 0) return "N/A";
+  return valid.reduce(
+    (worst, cur) => (GRADE_RANKS[cur] < GRADE_RANKS[worst] ? cur : worst),
+    valid[0]
+  ) as SslGrade;
 }
 
 export function getGradeColor(grade: string): string {
@@ -19,13 +58,74 @@ export function getGradeColor(grade: string): string {
     "B-": "bg-blue-400 text-white dark:bg-blue-500",
     "C+": "bg-amber-500 text-white dark:bg-amber-600",
     C: "bg-amber-500 text-white dark:bg-amber-600",
-    "C-": "bg-orange-400 text-white dark:bg-orange-500",
-    T: "bg-violet-500 text-white dark:bg-violet-600",
-    F: "bg-rose-500 text-white dark:bg-rose-600",
+    "C-": "bg-orange-500 text-white dark:bg-orange-600",
+    D: "bg-orange-600 text-white dark:bg-orange-700",
+    E: "bg-rose-500 text-white dark:bg-rose-600",
+    F: "bg-rose-600 text-white dark:bg-rose-700",
+    M: "bg-rose-600 text-white dark:bg-rose-700",
+    T: "bg-purple-600 text-white dark:bg-purple-700",
     "N/A": "bg-slate-400 text-white dark:bg-slate-600",
     "⏳": "bg-amber-200 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200 animate-pulse",
   };
   return colors[grade] || colors["N/A"];
+}
+
+export const INSECURE_GRADES = new Set(["T", "M", "F", "C-", "D", "E"]);
+
+export function isGradeInsecure(grade?: string | null): boolean {
+  if (!grade) return false;
+  return INSECURE_GRADES.has(grade.toUpperCase());
+}
+
+export function classifyCertificateStatus(params: {
+  rawStatus?: string | null;
+  grade?: string | null;
+  validityDays?: number | null;
+  vulnerabilities?: string[] | null;
+}): { status: CertificateStatus; statusText: string } {
+  const { rawStatus, grade, validityDays, vulnerabilities } = params;
+
+  if (
+    rawStatus === "DNS" ||
+    rawStatus === "IN_PROGRESS" ||
+    rawStatus === "pending"
+  ) {
+    return { status: "pending", statusText: "Análise em andamento" };
+  }
+
+  if (rawStatus === "ERROR" || rawStatus === "error") {
+    return { status: "error", statusText: "Erro na verificação" };
+  }
+
+  if (validityDays !== undefined && validityDays !== null && validityDays < 0) {
+    return { status: "expired", statusText: "Certificado expirado" };
+  }
+
+  const hasCriticalVulns =
+    Array.isArray(vulnerabilities) && vulnerabilities.length > 0;
+  if (isGradeInsecure(grade) || hasCriticalVulns) {
+    let msg = "Configuração insegura";
+    if (grade === "T") msg = "Certificado não confiável (T)";
+    else if (grade === "M") msg = "Domínio divergente (Mismatch)";
+    else if (grade === "F") msg = "Falha crítica de segurança (F)";
+    else if (hasCriticalVulns)
+      msg = `${vulnerabilities.length} vulnerabilidade(s) detectada(s)`;
+    return { status: "insecure", statusText: msg };
+  }
+
+  if (
+    validityDays !== undefined &&
+    validityDays !== null &&
+    validityDays <= 30
+  ) {
+    return { status: "expiring_soon", statusText: "Expirando em breve" };
+  }
+
+  if (grade === "N/A" || !grade) {
+    return { status: "pending", statusText: "Aguardando dados" };
+  }
+
+  return { status: "valid", statusText: "Certificado válido" };
 }
 
 export function parseIssuerName(cert: any): string | null {
@@ -48,6 +148,8 @@ export function getStatusColor(status: string): string {
       "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800",
     expiring_soon:
       "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800",
+    insecure:
+      "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800",
     error:
       "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800",
     pending:
@@ -57,14 +159,6 @@ export function getStatusColor(status: string): string {
   };
   return colors[status] || colors.pending;
 }
-
-import type {
-  CertDetailedInfo,
-  CipherSuiteItem,
-  EndpointSummary,
-  HstsInfo,
-  SecurityCheckItem,
-} from "@/types";
 
 export function parseSslLabsDetails(
   rawResponse?: string | Record<string, any> | null,
@@ -168,6 +262,17 @@ export function parseSslLabsDetails(
       for (const def of vulnDefinitions) {
         if (details[def.key] !== undefined) {
           const vulnerable = def.isVuln(details[def.key]);
+          if (def.key === "vulnBeast") {
+            // BEAST é mitigado no cliente em navegadores modernos; mantido como informativo sem derrubar a nota
+            securityChecks.push({
+              id: def.key,
+              label: def.label,
+              passed: true,
+              detail: vulnerable ? "Informativo (mitigado no cliente)" : "Protegido",
+              category: "feature",
+            });
+            continue;
+          }
           if (vulnerable) {
             vulnerabilities.push(def.label);
           }
