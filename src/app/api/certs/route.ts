@@ -27,7 +27,7 @@ function calcNextCheckAt(validityDays: number | null, status: string): string | 
 }
 
 function mapCheckRow(row: any) {
-  const parsed = parseSslLabsDetails(row.raw_response);
+  const parsed = parseSslLabsDetails(row.raw_response, row.domain);
   return {
     domain: row.domain,
     grade: row.grade,
@@ -42,6 +42,13 @@ function mapCheckRow(row: any) {
     rawResponse: row.raw_response,
     protocols: parsed.protocols,
     vulnerabilities: parsed.vulnerabilities,
+    securityChecks: parsed.securityChecks,
+    certDetails: parsed.certDetails,
+    endpoints: parsed.endpoints,
+    cipherSuites: parsed.cipherSuites,
+    serverSignature: parsed.serverSignature,
+    alpnProtocols: parsed.alpnProtocols,
+    hsts: parsed.hsts,
   };
 }
 
@@ -70,12 +77,16 @@ export async function GET(req: Request) {
       });
     }
 
-    // Listagem geral
+    // Buscar o último check de cada domínio em uma única query rápida no Turso
     const result = await query(`
-      SELECT domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, raw_response, checked_at
-      FROM certificate_checks
-      ORDER BY checked_at DESC
-      LIMIT 100
+      SELECT c.domain, c.grade, c.status, c.validity_days, c.expiry_date, c.issuer, c.total_validity_days, c.percent_remaining, c.next_check_at, c.raw_response, c.checked_at
+      FROM certificate_checks c
+      INNER JOIN (
+        SELECT domain, MAX(id) AS max_id
+        FROM certificate_checks
+        GROUP BY domain
+      ) latest ON c.id = latest.max_id
+      ORDER BY c.checked_at DESC
     `);
     const rows: any[] = result.rows as any[];
     const checks = rows.map(mapCheckRow);

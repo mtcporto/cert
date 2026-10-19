@@ -10,6 +10,61 @@ export type CertificateStatus =
   | "pending"
   | "timeout";
 
+export interface SecurityCheckItem {
+  id: string;
+  label: string;
+  passed: boolean;
+  detail?: string;
+  category: "vulnerability" | "feature";
+}
+
+export interface CertChainItem {
+  subject: string;
+  issuer: string;
+  notBefore?: string;
+  notAfter?: string;
+  keyAlg?: string;
+  keySize?: number;
+  sigAlg?: string;
+}
+
+export interface CertDetailedInfo {
+  subject?: string;
+  commonNames?: string[];
+  altNames?: string[];
+  notBefore?: string;
+  notAfter?: string;
+  keyAlg?: string;
+  keySize?: number;
+  sigAlg?: string;
+  issuerSubject?: string;
+  sct?: boolean;
+  chainCount?: number;
+  chain?: CertChainItem[];
+}
+
+export interface EndpointSummary {
+  ipAddress: string;
+  serverName?: string;
+  grade?: string;
+  statusMessage?: string;
+  durationMs?: number;
+}
+
+export interface CipherSuiteItem {
+  name: string;
+  cipherStrength?: number;
+  kxType?: string;
+  forwardSecrecy?: boolean;
+}
+
+export interface HstsInfo {
+  status?: string;
+  maxAge?: number;
+  includeSubdomains?: boolean;
+  preload?: boolean;
+}
+
 export interface CertificateResult {
   domain: string;
   grade: SslGrade;
@@ -25,6 +80,13 @@ export interface CertificateResult {
   percentRemaining?: number;
   protocols?: string[];
   vulnerabilities?: string[];
+  securityChecks?: SecurityCheckItem[];
+  certDetails?: CertDetailedInfo;
+  endpoints?: EndpointSummary[];
+  cipherSuites?: CipherSuiteItem[];
+  serverSignature?: string;
+  alpnProtocols?: string;
+  hsts?: HstsInfo;
   checkedAt: string;
   nextCheckAt?: string;
   cached?: boolean;
@@ -47,22 +109,3 @@ export interface CheckSummary {
   total: number;
 }
 
-export interface SslLabsEndpoint {
-  grade: string | null;
-  statusMessage: string | null;
-  details?: Record<string, unknown>;
-}
-
-export interface SslLabsResponse {
-  status: string;
-  statusMessage: string;
-  endpoints: SslLabsEndpoint[];
-  certs?: Array<{
-    commonNames?: string[];
-    altNames?: string[];
-    notBefore?: number;
-    notAfter?: number;
-    issuerO?: string;
-    issuerCN?: string;
-  }>;
-}

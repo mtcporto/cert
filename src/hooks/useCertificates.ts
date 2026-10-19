@@ -14,10 +14,8 @@ const DEFAULT_DOMAINS: string[] = [
 
 const LOCAL_STORAGE_DOMAINS_KEY = "certmonitor_domains";
 
-// Backend: Cloudflare Worker com D1 (ou variável de ambiente)
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ||
-  "https://cert-ssl-api-d1.mosaicoworkers.workers.dev";
+// Backend: Rotas locais Next.js + Turso (ou variável de ambiente se especificado)
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "/api";
 
 function makePendingResult(domain: string, statusText = "Aguardando análise"): CertificateResult {
   return {
@@ -56,7 +54,7 @@ function mapCachedCheckToResult(check: any): CertificateResult {
     check.nextCheckAt ?? check.next_check_at ?? undefined;
   const rawResponse = check.rawResponse ?? check.raw_response;
 
-  const parsedDetails = parseSslLabsDetails(rawResponse);
+  const parsedDetails = parseSslLabsDetails(rawResponse, check.domain);
 
   let protocols: string[] = [];
   if (Array.isArray(check.protocols)) {
@@ -131,6 +129,13 @@ function mapCachedCheckToResult(check: any): CertificateResult {
     percentRemaining: percentRemaining ?? undefined,
     protocols,
     vulnerabilities,
+    securityChecks: check.securityChecks ?? parsedDetails.securityChecks,
+    certDetails: check.certDetails ?? parsedDetails.certDetails,
+    endpoints: check.endpoints ?? parsedDetails.endpoints,
+    cipherSuites: check.cipherSuites ?? parsedDetails.cipherSuites,
+    serverSignature: check.serverSignature ?? parsedDetails.serverSignature,
+    alpnProtocols: check.alpnProtocols ?? parsedDetails.alpnProtocols,
+    hsts: check.hsts ?? parsedDetails.hsts,
     checkedAt,
     nextCheckAt,
     cached: true,
@@ -300,7 +305,7 @@ export function useCertificates() {
           statusText = "Análise em processamento no SSL Labs";
         }
 
-        const { protocols, vulnerabilities } = parseSslLabsDetails(data);
+        const parsedDetails = parseSslLabsDetails(data, domain);
 
         const result: CertificateResult = {
           domain,
@@ -320,8 +325,15 @@ export function useCertificates() {
           issuer,
           totalValidityDays,
           percentRemaining,
-          protocols,
-          vulnerabilities,
+          protocols: parsedDetails.protocols,
+          vulnerabilities: parsedDetails.vulnerabilities,
+          securityChecks: parsedDetails.securityChecks,
+          certDetails: parsedDetails.certDetails,
+          endpoints: parsedDetails.endpoints,
+          cipherSuites: parsedDetails.cipherSuites,
+          serverSignature: parsedDetails.serverSignature,
+          alpnProtocols: parsedDetails.alpnProtocols,
+          hsts: parsedDetails.hsts,
           checkedAt: new Date().toISOString(),
           cached: false,
         };
@@ -341,8 +353,8 @@ export function useCertificates() {
                 issuer,
                 totalValidityDays,
                 percentRemaining,
-                protocols,
-                vulnerabilities,
+                protocols: parsedDetails.protocols,
+                vulnerabilities: parsedDetails.vulnerabilities,
                 rawResponse: JSON.stringify(data),
               }),
             });
@@ -397,46 +409,42 @@ export function useCertificates() {
         });
       });
 
-      let cacheResults: (CertificateResult | null)[] = [];
+      const validCachedByDomain = new Map<string, CertificateResult>();
 
-      // 2. BUSCAR CACHE EM PARALELO (se não for forçado)
+      // 2. BUSCAR TODOS OS CACHES DO TURSO EM UMA ÚNICA REQUISIÇÃO RÁPIDA (se não for forçado)
       if (!force) {
-        const cachePromises = listToRun.map(async (domain) => {
-          try {
-            const res = await fetch(
-              `${API_BASE}/certs?domain=${encodeURIComponent(domain)}`
-            );
-            if (res.ok) {
-              const data: any = await res.json();
-              const check = data.check;
-              if (check && isCacheValid(check)) {
-                return mapCachedCheckToResult(check);
+        try {
+          const res = await fetch(`${API_BASE}/certs`);
+          if (res.ok) {
+            const data: any = await res.json();
+            const checks: any[] = Array.isArray(data.checks) ? data.checks : [];
+            for (const check of checks) {
+              if (
+                check?.domain &&
+                !validCachedByDomain.has(check.domain) &&
+                isCacheValid(check)
+              ) {
+                validCachedByDomain.set(
+                  check.domain,
+                  mapCachedCheckToResult(check)
+                );
               }
             }
-          } catch {
-            // ignore
           }
-          return null;
-        });
+        } catch {
+          // ignore
+        }
 
-        cacheResults = await Promise.all(cachePromises);
-
-        cacheResults.forEach((check) => {
-          if (check) {
-            setResults((prev) => {
-              const exists = prev.find((r) => r.domain === check.domain);
-              if (exists) {
-                return prev.map((r) => (r.domain === check.domain ? check : r));
-              }
-              return [...prev, check];
-            });
-          }
-        });
+        if (validCachedByDomain.size > 0) {
+          setResults((prev) =>
+            prev.map((r) => validCachedByDomain.get(r.domain) ?? r)
+          );
+        }
       }
 
       // 3. DOMÍNIOS QUE PRECISAM DE VERIFICAÇÃO
       const domainsToCheck = listToRun.filter(
-        (d) => !cacheResults.find((c) => c?.domain === d)
+        (d) => !validCachedByDomain.has(d)
       );
 
       if (domainsToCheck.length === 0) {

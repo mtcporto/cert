@@ -36,21 +36,23 @@ export async function POST(req: Request) {
       );
     }
 
+    const uniqueDomains = Array.from(
+      new Set(
+        domains
+          .map((d: any) => String(d).trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
+
     await query("DELETE FROM domains");
 
-    for (const domain of domains) {
-      await query("INSERT INTO domains (domain, is_active) VALUES (?, 1)", [
-        domain,
-      ]);
-    }
-
-    const result = await query(
-      "SELECT domain FROM domains WHERE is_active = 1 ORDER BY created_at DESC"
+    await Promise.all(
+      uniqueDomains.map((domain) =>
+        query("INSERT INTO domains (domain, is_active) VALUES (?, 1)", [domain])
+      )
     );
-    const rows: any[] = result.rows as any[];
-    const saved = rows.map((row) => row.domain);
 
-    return NextResponse.json({ domains: saved });
+    return NextResponse.json({ domains: uniqueDomains });
   } catch (error: any) {
     return NextResponse.json(
       { error: "Erro ao salvar domínios", detail: error.message },
@@ -58,3 +60,4 @@ export async function POST(req: Request) {
     );
   }
 }
+

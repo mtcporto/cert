@@ -1,11 +1,14 @@
-import { createClient } from "@libsql/client";
+import { createClient, type Client } from "@libsql/client";
 
 // ============================================================
 // Storage em memória para desenvolvimento local (fallback)
 // Em produção (Vercel + Turso), usa libsql client real
 // ============================================================
-let memoryDomains: Map<string, { domain: string; isActive: boolean; createdAt: string; updatedAt: string }> = new Map();
-let memoryChecks: Array<any> = [];
+const memoryDomains: Map<
+  string,
+  { domain: string; isActive: boolean; createdAt: string; updatedAt: string }
+> = new Map();
+const memoryChecks: Array<any> = [];
 
 function mockExecute(sql: string, params?: any[]) {
   const s = sql.trim().replace(/\s+/g, " ").toUpperCase();
@@ -14,12 +17,12 @@ function mockExecute(sql: string, params?: any[]) {
     return { rows: [], rowsAffected: 0 };
   }
 
-  if (s.startsWith("DELETE FROM domains")) {
+  if (s.startsWith("DELETE FROM DOMAINS")) {
     memoryDomains.clear();
     return { rows: [], rowsAffected: 0 };
   }
 
-  if (s.startsWith("INSERT INTO domains")) {
+  if (s.startsWith("INSERT INTO DOMAINS")) {
     const domain = params?.[0];
     if (domain) {
       const now = new Date().toISOString();
@@ -33,7 +36,7 @@ function mockExecute(sql: string, params?: any[]) {
     return { rows: [], rowsAffected: 1 };
   }
 
-  if (s.includes("FROM domains") && s.includes("is_active")) {
+  if (s.includes("FROM DOMAINS") && s.includes("IS_ACTIVE")) {
     const rows = Array.from(memoryDomains.values()).map((d) => ({
       domain: d.domain,
       is_active: d.isActive ? 1 : 0,
@@ -43,7 +46,7 @@ function mockExecute(sql: string, params?: any[]) {
     return { rows, rowsAffected: rows.length };
   }
 
-  if (s.startsWith("INSERT INTO certificate_checks")) {
+  if (s.startsWith("INSERT INTO CERTIFICATE_CHECKS")) {
     const check = {
       domain: params?.[0],
       grade: params?.[1],
@@ -61,12 +64,8 @@ function mockExecute(sql: string, params?: any[]) {
     return { rows: [], rowsAffected: 1 };
   }
 
-  if (s.includes("FROM certificate_checks")) {
-    let querySql = s;
-    let paramsFinal = params;
-
-    // Suporte a filtro por domínio: WHERE domain = ?
-    const domainMatch = s.match(/WHERE\s+domain\s*=\s*\?/i);
+  if (s.includes("FROM CERTIFICATE_CHECKS")) {
+    const domainMatch = s.match(/WHERE\s+DOMAIN\s*=\s*\?/i);
     if (domainMatch) {
       const domainParam = params?.[0];
       const filtered = memoryChecks.filter((c) => c.domain === domainParam);
@@ -76,19 +75,17 @@ function mockExecute(sql: string, params?: any[]) {
         .slice()
         .reverse()
         .slice(0, limit)
-        .map((c) => ({
-          domain: c.domain,
-          grade: c.grade,
-          status: c.status,
-          validity_days: c.validity_days,
-          expiry_date: c.expiry_date,
-          issuer: c.issuer,
-          total_validity_days: c.total_validity_days,
-          percent_remaining: c.percent_remaining,
-          next_check_at: c.next_check_at,
-          raw_response: c.raw_response,
-          checked_at: c.checked_at,
-        }));
+        .map((c) => ({ ...c }));
+      return { rows, rowsAffected: rows.length };
+    }
+
+    // Caso seja busca do último check por domínio (GROUP BY domain)
+    if (s.includes("GROUP BY DOMAIN")) {
+      const latestByDomain = new Map<string, any>();
+      for (const c of memoryChecks) {
+        latestByDomain.set(c.domain, { ...c });
+      }
+      const rows = Array.from(latestByDomain.values()).reverse();
       return { rows, rowsAffected: rows.length };
     }
 
@@ -98,91 +95,95 @@ function mockExecute(sql: string, params?: any[]) {
       .slice()
       .reverse()
       .slice(0, limit)
-      .map((c) => ({
-        domain: c.domain,
-        grade: c.grade,
-        status: c.status,
-        validity_days: c.validity_days,
-        expiry_date: c.expiry_date,
-        issuer: c.issuer,
-        total_validity_days: c.total_validity_days,
-        percent_remaining: c.percent_remaining,
-        next_check_at: c.next_check_at,
-        raw_response: c.raw_response,
-        checked_at: c.checked_at,
-      }));
+      .map((c) => ({ ...c }));
     return { rows, rowsAffected: rows.length };
   }
 
   return { rows: [], rowsAffected: 0 };
 }
 
-function createDbClient() {
+let cachedTursoClient: Client | null = null;
+let initPromise: Promise<void> | null = null;
+
+function getTursoClient(): Client | null {
+  if (cachedTursoClient) return cachedTursoClient;
   const url = process.env.TURSO_DATABASE_URL;
   const authToken = process.env.TURSO_AUTH_TOKEN;
 
   if (url && authToken) {
-    const tursoClient = createClient({ url, authToken });
+    cachedTursoClient = createClient({ url, authToken });
+    return cachedTursoClient;
+  }
+  return null;
+}
+
+function createDbClient() {
+  const tursoClient = getTursoClient();
+
+  if (tursoClient) {
     return {
       execute: async (sql: string, params?: any[]) => {
         try {
-          return await tursoClient.execute(sql, params);
+          return await tursoClient.execute({ sql, args: params ?? [] });
         } catch (error) {
-          console.error('Turso error, falling back to memory:', error);
+          console.error("Turso error, falling back to memory:", error);
           return mockExecute(sql, params);
         }
       },
-    } as any;
+    };
   }
 
   return {
     execute: async (sql: string, params?: any[]) => mockExecute(sql, params),
-  } as any;
+  };
 }
 
 export async function initDb() {
-  const db = createDbClient();
+  if (initPromise) return initPromise;
 
-  // Cada statement executado separadamente (libsql não aceita múltiplos)
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS domains (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      domain TEXT NOT NULL UNIQUE,
-      is_active INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+  initPromise = (async () => {
+    const turso = getTursoClient();
+    if (turso) {
+      try {
+        await turso.batch(
+          [
+            `CREATE TABLE IF NOT EXISTS domains (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              domain TEXT NOT NULL UNIQUE,
+              is_active INTEGER DEFAULT 1,
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS certificate_checks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              domain TEXT NOT NULL,
+              grade TEXT,
+              status TEXT,
+              validity_days INTEGER,
+              expiry_date TEXT,
+              issuer TEXT,
+              total_validity_days INTEGER,
+              percent_remaining INTEGER,
+              next_check_at TEXT,
+              raw_response TEXT,
+              checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE INDEX IF NOT EXISTS idx_cert_checks_domain ON certificate_checks(domain)`,
+            `CREATE INDEX IF NOT EXISTS idx_cert_checks_next_check ON certificate_checks(next_check_at)`,
+            `CREATE INDEX IF NOT EXISTS idx_cert_checks_checked_at ON certificate_checks(checked_at)`,
+          ],
+          "write"
+        );
+        return;
+      } catch (err) {
+        console.error("Failed batch initDb on Turso:", err);
+        initPromise = null;
+      }
+    }
+  })();
 
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS certificate_checks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      domain TEXT NOT NULL,
-      grade TEXT,
-      status TEXT,
-      validity_days INTEGER,
-      expiry_date TEXT,
-      issuer TEXT,
-      total_validity_days INTEGER,
-      percent_remaining INTEGER,
-      next_check_at TEXT,
-      raw_response TEXT,
-      checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  await db.execute(`
-    CREATE INDEX IF NOT EXISTS idx_cert_checks_domain ON certificate_checks(domain)
-  `);
-
-  await db.execute(`
-    CREATE INDEX IF NOT EXISTS idx_cert_checks_next_check ON certificate_checks(next_check_at)
-  `);
-
-  await db.execute(`
-    CREATE INDEX IF NOT EXISTS idx_cert_checks_checked_at ON certificate_checks(checked_at)
-  `);
+  return initPromise;
 }
 
 export async function query(sql: string, params?: any[]) {
@@ -191,3 +192,4 @@ export async function query(sql: string, params?: any[]) {
 }
 
 export type DbClient = ReturnType<typeof createDbClient>;
+

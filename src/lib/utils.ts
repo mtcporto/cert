@@ -46,16 +46,40 @@ export function getStatusColor(status: string): string {
   return colors[status] || colors.pending;
 }
 
-export function parseSslLabsDetails(rawResponse?: string | Record<string, any> | null): {
+import type {
+  CertDetailedInfo,
+  CipherSuiteItem,
+  EndpointSummary,
+  HstsInfo,
+  SecurityCheckItem,
+} from "@/types";
+
+export function parseSslLabsDetails(
+  rawResponse?: string | Record<string, any> | null,
+  domain?: string
+): {
   protocols: string[];
   vulnerabilities: string[];
+  securityChecks: SecurityCheckItem[];
+  certDetails?: CertDetailedInfo;
+  endpoints?: EndpointSummary[];
+  cipherSuites?: CipherSuiteItem[];
+  serverSignature?: string;
+  alpnProtocols?: string;
+  hsts?: HstsInfo;
 } {
-  if (!rawResponse) return { protocols: [], vulnerabilities: [] };
+  if (!rawResponse) {
+    return { protocols: [], vulnerabilities: [], securityChecks: [] };
+  }
   try {
-    const data = typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
-    const details = data?.endpoints?.[0]?.details;
+    const data =
+      typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
+    const primaryEndpoint =
+      data?.endpoints?.find((e: any) => e.details) || data?.endpoints?.[0];
+    const details = primaryEndpoint?.details;
     const protocols: string[] = [];
     const vulnerabilities: string[] = [];
+    const securityChecks: SecurityCheckItem[] = [];
 
     if (Array.isArray(details?.protocols)) {
       for (const p of details.protocols) {
@@ -67,30 +91,82 @@ export function parseSslLabsDetails(rawResponse?: string | Record<string, any> |
     }
 
     if (details) {
-      const vulnFlags: Record<string, string> = {
-        heartbleed: "Heartbleed",
-        poodle: "POODLE (SSLv3)",
-        poodleTls: "POODLE (TLS)",
-        freak: "FREAK",
-        logjam: "Logjam",
-        drownVulnerable: "DROWN",
-        ticketbleed: "Ticketbleed",
-        bleichenbacher: "ROBOT / Bleichenbacher",
-        zombiePoodle: "Zombie POODLE",
-        goldenDoodle: "GOLDENDOODLE",
-        zeroLengthPaddingOracle: "0-Length Padding Oracle",
-        sleepingPoodle: "Sleeping POODLE",
-      };
+      const vulnDefinitions: Array<{
+        key: string;
+        label: string;
+        isVuln: (val: any) => boolean;
+      }> = [
+        {
+          key: "heartbleed",
+          label: "Heartbleed (CVE-2014-0160)",
+          isVuln: (v) => v === true,
+        },
+        {
+          key: "poodle",
+          label: "POODLE SSLv3 (CVE-2014-3566)",
+          isVuln: (v) => v === true,
+        },
+        {
+          key: "poodleTls",
+          label: "POODLE TLS",
+          isVuln: (v) => typeof v === "number" && v > 1,
+        },
+        {
+          key: "freak",
+          label: "FREAK (CVE-2015-0204)",
+          isVuln: (v) => v === true,
+        },
+        {
+          key: "logjam",
+          label: "Logjam (CVE-2015-4000)",
+          isVuln: (v) => v === true,
+        },
+        {
+          key: "drownVulnerable",
+          label: "DROWN (CVE-2016-0800)",
+          isVuln: (v) => v === true,
+        },
+        {
+          key: "ticketbleed",
+          label: "Ticketbleed (CVE-2016-9244)",
+          isVuln: (v) => typeof v === "number" && v > 1,
+        },
+        {
+          key: "bleichenbacher",
+          label: "ROBOT / Bleichenbacher",
+          isVuln: (v) => typeof v === "number" && v > 1,
+        },
+        {
+          key: "openSslCcs",
+          label: "OpenSSL CCS Injection (CVE-2014-0224)",
+          isVuln: (v) => typeof v === "number" && v > 1,
+        },
+        {
+          key: "openSSLLuckyMinus20",
+          label: "OpenSSL LuckyMinus20 (CVE-2016-2107)",
+          isVuln: (v) => typeof v === "number" && v > 1,
+        },
+        {
+          key: "vulnBeast",
+          label: "BEAST (CVE-2011-3389)",
+          isVuln: (v) => v === true,
+        },
+      ];
 
-      for (const [key, label] of Object.entries(vulnFlags)) {
-        const val = details[key];
-        if (val === true || (typeof val === "number" && val > 1)) {
-          vulnerabilities.push(label);
+      for (const def of vulnDefinitions) {
+        if (details[def.key] !== undefined) {
+          const vulnerable = def.isVuln(details[def.key]);
+          if (vulnerable) {
+            vulnerabilities.push(def.label);
+          }
+          securityChecks.push({
+            id: def.key,
+            label: def.label,
+            passed: !vulnerable,
+            detail: vulnerable ? "Vulnerável" : "Protegido",
+            category: "vulnerability",
+          });
         }
-      }
-
-      if (details.vulnBeast === true) {
-        vulnerabilities.push("BEAST");
       }
 
       if (details.vulnerabilities && typeof details.vulnerabilities === "object") {
@@ -100,11 +176,159 @@ export function parseSslLabsDetails(rawResponse?: string | Record<string, any> |
           }
         }
       }
+
+      // Recursos de segurança (Features)
+      if (details.forwardSecrecy !== undefined) {
+        const fsSupported = Number(details.forwardSecrecy) >= 2;
+        securityChecks.push({
+          id: "forwardSecrecy",
+          label: "Forward Secrecy (PFS)",
+          passed: fsSupported,
+          detail:
+            Number(details.forwardSecrecy) >= 4
+              ? "Suportado com todos os clientes"
+              : fsSupported
+                ? "Suportado com navegadores modernos"
+                : "Não suportado",
+          category: "feature",
+        });
+      }
+
+      if (details.hstsPolicy) {
+        const hstsPresent = details.hstsPolicy.status === "present";
+        securityChecks.push({
+          id: "hsts",
+          label: "HSTS (Strict-Transport-Security)",
+          passed: hstsPresent,
+          detail: hstsPresent
+            ? `Ativo (max-age=${details.hstsPolicy.maxAge ?? 0}s)`
+            : "Não configurado",
+          category: "feature",
+        });
+      }
+
+      if (details.ocspStapling !== undefined) {
+        securityChecks.push({
+          id: "ocspStapling",
+          label: "OCSP Stapling",
+          passed: Boolean(details.ocspStapling),
+          detail: details.ocspStapling ? "Habilitado" : "Desabilitado",
+          category: "feature",
+        });
+      }
+
+      if (details.supportsAlpn !== undefined || details.alpnProtocols) {
+        const alpn = Boolean(details.supportsAlpn || details.alpnProtocols);
+        securityChecks.push({
+          id: "alpn",
+          label: "ALPN / HTTP/2",
+          passed: alpn,
+          detail: details.alpnProtocols || (alpn ? "Suportado" : "Não suportado"),
+          category: "feature",
+        });
+      }
     }
 
-    return { protocols, vulnerabilities };
+    // Extrair detalhes do certificado e cadeia
+    let certDetails: CertDetailedInfo | undefined;
+    if (Array.isArray(data?.certs) && data.certs.length > 0) {
+      const mainCert =
+        (domain
+          ? data.certs.find(
+              (c: any) =>
+                c.commonNames?.includes(domain) || c.altNames?.includes(domain)
+            )
+          : null) || data.certs[0];
+
+      certDetails = {
+        subject: mainCert.subject,
+        commonNames: mainCert.commonNames,
+        altNames: mainCert.altNames,
+        notBefore: mainCert.notBefore
+          ? new Date(mainCert.notBefore).toISOString()
+          : undefined,
+        notAfter: mainCert.notAfter
+          ? new Date(mainCert.notAfter).toISOString()
+          : undefined,
+        keyAlg: mainCert.keyAlg,
+        keySize: mainCert.keySize,
+        sigAlg: mainCert.sigAlg,
+        issuerSubject:
+          mainCert.issuerLabel || mainCert.issuerO || mainCert.issuerCN || mainCert.issuerSubject,
+        sct: Boolean(mainCert.sct),
+        chainCount: data.certs.length,
+        chain: data.certs.map((c: any) => ({
+          subject: c.commonNames?.[0] || c.subject || "Certificado",
+          issuer: c.issuerLabel || c.issuerO || c.issuerCN || c.issuerSubject || "Desconhecido",
+          notBefore: c.notBefore ? new Date(c.notBefore).toISOString() : undefined,
+          notAfter: c.notAfter ? new Date(c.notAfter).toISOString() : undefined,
+          keyAlg: c.keyAlg,
+          keySize: c.keySize,
+          sigAlg: c.sigAlg,
+        })),
+      };
+    }
+
+    // Extrair endpoints (IPs/Servidores)
+    let endpoints: EndpointSummary[] | undefined;
+    if (Array.isArray(data?.endpoints) && data.endpoints.length > 0) {
+      endpoints = data.endpoints.map((ep: any) => ({
+        ipAddress: ep.ipAddress,
+        serverName: ep.serverName,
+        grade: ep.grade,
+        statusMessage: ep.statusMessage,
+        durationMs: ep.duration,
+      }));
+    }
+
+    // Extrair Cipher Suites
+    const cipherSuites: CipherSuiteItem[] = [];
+    const rawSuites = Array.isArray(details?.suites)
+      ? details.suites.flatMap((s: any) => s.list || [])
+      : details?.suites?.list || [];
+
+    const seenCiphers = new Set<string>();
+    for (const suite of rawSuites) {
+      if (suite?.name && !seenCiphers.has(suite.name)) {
+        seenCiphers.add(suite.name);
+        cipherSuites.push({
+          name: suite.name,
+          cipherStrength: suite.cipherStrength,
+          kxType: suite.kxType,
+          forwardSecrecy:
+            suite.kxType === "ECDHE" ||
+            suite.kxType === "DHE" ||
+            String(suite.name).includes("ECDHE") ||
+            String(suite.name).includes("DHE") ||
+            String(suite.name).startsWith("TLS_AES_") ||
+            String(suite.name).startsWith("TLS_CHACHA20_"),
+        });
+      }
+    }
+
+    const hsts: HstsInfo | undefined = details?.hstsPolicy
+      ? {
+          status: details.hstsPolicy.status,
+          maxAge: details.hstsPolicy.maxAge,
+          includeSubdomains: Boolean(details.hstsPolicy.includeSubdomains),
+          preload: Boolean(details.hstsPolicy.preload),
+        }
+      : undefined;
+
+    return {
+      protocols,
+      vulnerabilities,
+      securityChecks,
+      certDetails,
+      endpoints,
+      cipherSuites: cipherSuites.length > 0 ? cipherSuites : undefined,
+      serverSignature: details?.serverSignature,
+      alpnProtocols: details?.alpnProtocols,
+      hsts,
+    };
   } catch {
-    return { protocols: [], vulnerabilities: [] };
+    return { protocols: [], vulnerabilities: [], securityChecks: [] };
   }
 }
+
 
