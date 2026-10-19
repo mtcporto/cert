@@ -10,6 +10,7 @@ import {
   X,
   RefreshCw,
   AlertCircle,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +18,7 @@ import { domainSchema } from "@/lib/validations";
 
 interface DomainManagerProps {
   domains: string[];
-  onSave: (domains: string[]) => void;
+  onSave: (domains: string[], adminToken?: string) => Promise<void> | void;
   onClose: () => void;
   isLoading?: boolean;
 }
@@ -31,6 +32,14 @@ export function DomainManager({
   const [localDomains, setLocalDomains] = useState([...domains]);
   const [newDomain, setNewDomain] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [adminToken, setAdminToken] = useState(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("certmonitor_admin_token") || "";
+    }
+    return "";
+  });
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -65,9 +74,20 @@ export function DomainManager({
     setLocalDomains(localDomains.filter((_, i) => i !== index));
   };
 
-  const handleSave = () => {
-    onSave(localDomains);
-    onClose();
+  const handleSave = async () => {
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      await onSave(localDomains, adminToken.trim());
+      if (typeof window !== "undefined" && adminToken.trim()) {
+        sessionStorage.setItem("certmonitor_admin_token", adminToken.trim());
+      }
+      onClose();
+    } catch (err: any) {
+      setSaveError(err?.message || "Erro ao salvar alterações no Cloudflare D1.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -205,36 +225,59 @@ export function DomainManager({
           </div>
         </div>
 
-        <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-b-xl">
-          <div className="flex gap-4">
-            <button
-              type="button"
-              onClick={handleExport}
-              className="text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center gap-1.5"
-            >
-              <Download className="w-3.5 h-3.5" /> Exportar JSON
-            </button>
-            <label className="text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer">
-              <Upload className="w-3.5 h-3.5" /> Importar JSON
-              <input
-                type="file"
-                accept=".json"
-                onChange={handleImport}
-                className="hidden"
-              />
-            </label>
+        {saveError && (
+          <div className="mx-6 mb-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-600 dark:text-rose-400 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{saveError}</span>
           </div>
-          <div className="flex gap-2 justify-end">
-            <Button type="button" variant="outline" onClick={onClose}>
+        )}
+
+        <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-6 py-4 flex flex-col gap-3 rounded-b-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-1 max-w-md">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 shrink-0">
+                <Lock className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Token Admin:</span>
+              </div>
+              <Input
+                type="password"
+                placeholder="Insira o token de administrador"
+                value={adminToken}
+                onChange={(e) => setAdminToken(e.target.value)}
+                className="h-8 text-xs flex-1"
+              />
+            </div>
+            <div className="flex gap-4 self-end sm:self-center">
+              <button
+                type="button"
+                onClick={handleExport}
+                className="text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5" /> Exportar JSON
+              </button>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer">
+                <Upload className="w-3.5 h-3.5" /> Importar JSON
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleImport}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="flex gap-2 justify-end pt-1">
+            <Button type="button" variant="outline" onClick={onClose} disabled={isSaving}>
               Cancelar
             </Button>
             <Button
               type="button"
               onClick={handleSave}
-              disabled={isLoading}
+              disabled={isLoading || isSaving}
               className="flex items-center gap-1.5"
             >
-              {isLoading ? (
+              {isLoading || isSaving ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <Save className="w-4 h-4" />

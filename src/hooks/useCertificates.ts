@@ -485,32 +485,59 @@ export function useCertificates() {
     [domains, analyzeDomain]
   );
 
-  // Salvar domínios no estado, localStorage e backend D1/Turso
+  // Salvar domínios no backend D1 de forma autenticada e atômica
   const setDomains = useCallback(
-    async (newDomains: string[]) => {
+    async (newDomains: string[], adminToken?: string) => {
       const cleaned = Array.from(
         new Set(newDomains.map((d) => d.trim().toLowerCase()).filter(Boolean))
       );
-      setDomainsState(cleaned);
+      if (cleaned.length === 0 && newDomains.length > 0) {
+        throw new Error("Nenhum domínio válido para salvar.");
+      }
 
+      // Persistir no backend Cloudflare D1
+      const token =
+        adminToken ||
+        (typeof window !== "undefined"
+          ? sessionStorage.getItem("certmonitor_admin_token") || ""
+          : "");
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token.trim()}`;
+      }
+
+      const res = await fetch(`${API_BASE}/domains`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ domains: cleaned }),
+      });
+
+      if (!res.ok) {
+        let msg = `Erro HTTP ${res.status} ao salvar domínios`;
+        try {
+          const body = await res.json();
+          if (body.error) msg = body.error;
+        } catch {
+          // ignore
+        }
+        if (res.status === 401) {
+          msg = "Acesso não autorizado: token de administrador inválido ou ausente.";
+        }
+        throw new Error(msg);
+      }
+
+      // Atualiza estado local e cache somente após sucesso confirmado no D1
+      setDomainsState(cleaned);
       try {
         localStorage.setItem(LOCAL_STORAGE_DOMAINS_KEY, JSON.stringify(cleaned));
       } catch {
         // ignore
       }
 
-      // Persistir no backend
-      try {
-        await fetch(`${API_BASE}/domains`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ domains: cleaned }),
-        });
-      } catch {
-        // ignore erro de rede e mantém localStorage
-      }
-
-      // Dispara análise para a nova lista (aproveitando cache dos que já existem)
+      // Dispara análise para a nova lista
       runAnalysis({ force: false, targetDomains: cleaned });
     },
     [runAnalysis]

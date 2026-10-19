@@ -234,24 +234,35 @@ export default {
     }
 
     if (path === '/domains' && method === 'POST') {
-      // TODO(PR2): exigir autenticação de admin e gravar de forma atômica (batch)
+      if (!isAdmin(request, env)) {
+        return Response.json(
+          { error: 'Não autorizado: token de administrador inválido ou ausente' },
+          { status: 401, headers: corsHeaders }
+        );
+      }
       try {
         const { domains } = await request.json();
         if (!Array.isArray(domains)) {
-          return Response.json({ error: 'Expected array' }, { status: 400, headers: corsHeaders });
+          return Response.json({ error: 'Expected array of domains' }, { status: 400, headers: corsHeaders });
         }
         const uniqueDomains = [...new Set(domains.map(normalizeHost).filter(Boolean))];
+        if (uniqueDomains.length === 0 && domains.length > 0) {
+          return Response.json({ error: 'Nenhum domínio válido fornecido' }, { status: 400, headers: corsHeaders });
+        }
         if (uniqueDomains.length > 200) {
-          return Response.json({ error: 'Too many domains' }, { status: 400, headers: corsHeaders });
+          return Response.json({ error: 'Limite de 200 domínios excedido' }, { status: 400, headers: corsHeaders });
         }
-        await env.cert_ssl_db_d1.prepare('DELETE FROM domains').run();
-        for (const d of uniqueDomains) {
-          await env.cert_ssl_db_d1
-            .prepare('INSERT INTO domains (domain, is_active) VALUES (?, 1)')
-            .bind(d)
-            .run();
-        }
-        return Response.json({ domains: uniqueDomains }, { headers: corsHeaders });
+
+        // Operação atômica no D1: se qualquer insert falhar, o lote é revertido
+        const stmts = [
+          env.cert_ssl_db_d1.prepare('DELETE FROM domains'),
+          ...uniqueDomains.map((d) =>
+            env.cert_ssl_db_d1.prepare('INSERT INTO domains (domain, is_active) VALUES (?, 1)').bind(d)
+          ),
+        ];
+        await env.cert_ssl_db_d1.batch(stmts);
+
+        return Response.json({ success: true, count: uniqueDomains.length, domains: uniqueDomains }, { headers: corsHeaders });
       } catch (e) {
         return Response.json({ error: e.message }, { status: 500, headers: corsHeaders });
       }
