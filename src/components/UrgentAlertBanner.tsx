@@ -20,17 +20,7 @@ export function UrgentAlertBanner({
   results = [],
   onSelectDomain,
 }: UrgentAlertBannerProps) {
-  const [apiAlerts, setApiAlerts] = useState<Alert[]>([]);
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    fetch("/api/alerts")
-      .then((r) => r.json())
-      .then((data: any) => setApiAlerts(data.alerts || []))
-      .catch(() => {
-        // Sem alertas se falhar
-      });
-  }, []);
 
   const derivedAlerts = useMemo<Alert[]>(() => {
     const list: Alert[] = [];
@@ -68,14 +58,7 @@ export function UrgentAlertBanner({
     return list;
   }, [results]);
 
-  const allAlerts = useMemo(() => {
-    const map = new Map<string, Alert>();
-    for (const a of apiAlerts) map.set(a.id, a);
-    for (const a of derivedAlerts) map.set(a.id, a);
-    return Array.from(map.values());
-  }, [apiAlerts, derivedAlerts]);
-
-  const activeAlerts = allAlerts.filter((a) => !dismissed.has(a.id));
+  const activeAlerts = derivedAlerts.filter((a) => !dismissed.has(a.id));
 
   if (activeAlerts.length === 0) return null;
 

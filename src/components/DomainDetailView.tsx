@@ -139,7 +139,7 @@ export function DomainDetailView({
                 </span>
                 {result.cached && (
                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
-                    Cache Turso
+                    Cache D1
                   </span>
                 )}
               </div>

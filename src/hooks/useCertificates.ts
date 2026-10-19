@@ -14,8 +14,10 @@ const DEFAULT_DOMAINS: string[] = [
 
 const LOCAL_STORAGE_DOMAINS_KEY = "certmonitor_domains";
 
-// Backend: Rotas locais Next.js + Turso (ou variável de ambiente se especificado)
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "/api";
+// Backend: Cloudflare Worker com D1
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ||
+  "https://cert-ssl-api-d1.mosaicoworkers.workers.dev";
 
 function makePendingResult(domain: string, statusText = "Aguardando análise"): CertificateResult {
   return {
@@ -411,35 +413,30 @@ export function useCertificates() {
 
       const validCachedByDomain = new Map<string, CertificateResult>();
 
-      // 2. BUSCAR TODOS OS CACHES DO TURSO EM UMA ÚNICA REQUISIÇÃO RÁPIDA (se não for forçado)
+      // 2. BUSCAR CACHE NO CLOUDFLARE D1 EM PARALELO (inclui raw_response completo para a página de detalhes)
       if (!force) {
-        try {
-          const res = await fetch(`${API_BASE}/certs`);
-          if (res.ok) {
-            const data: any = await res.json();
-            const checks: any[] = Array.isArray(data.checks) ? data.checks : [];
-            for (const check of checks) {
-              if (
-                check?.domain &&
-                !validCachedByDomain.has(check.domain) &&
-                isCacheValid(check)
-              ) {
-                validCachedByDomain.set(
-                  check.domain,
-                  mapCachedCheckToResult(check)
-                );
+        await Promise.all(
+          listToRun.map(async (domain) => {
+            try {
+              const res = await fetch(
+                `${API_BASE}/certs?domain=${encodeURIComponent(domain)}`
+              );
+              if (res.ok) {
+                const data: any = await res.json();
+                const check = data.check;
+                if (check && isCacheValid(check)) {
+                  const mapped = mapCachedCheckToResult(check);
+                  validCachedByDomain.set(domain, mapped);
+                  setResults((prev) =>
+                    prev.map((r) => (r.domain === domain ? mapped : r))
+                  );
+                }
               }
+            } catch {
+              // ignore
             }
-          }
-        } catch {
-          // ignore
-        }
-
-        if (validCachedByDomain.size > 0) {
-          setResults((prev) =>
-            prev.map((r) => validCachedByDomain.get(r.domain) ?? r)
-          );
-        }
+          })
+        );
       }
 
       // 3. DOMÍNIOS QUE PRECISAM DE VERIFICAÇÃO
