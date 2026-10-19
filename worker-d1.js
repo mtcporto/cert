@@ -231,7 +231,115 @@ async function saveCheck(env, summary, rawResponse) {
     )
     .bind(summary.domain, summary.domain);
 
-  await env.cert_ssl_db_d1.batch([insertStmt, pruneStmt]);
+  const prev = await env.cert_ssl_db_d1
+    .prepare(
+      `SELECT grade, status, validity_days, expiry_date
+       FROM certificate_checks
+       WHERE domain = ?
+       ORDER BY id DESC
+       LIMIT 1`
+    )
+    .bind(summary.domain)
+    .first();
+
+  const domain = summary.domain;
+  const eventStmts = [];
+
+  // 1. Mudança de nota
+  if (
+    prev &&
+    prev.grade &&
+    summary.grade &&
+    prev.grade !== summary.grade &&
+    prev.grade !== 'N/A' &&
+    summary.grade !== 'N/A'
+  ) {
+    const isWorse = (GRADE_RANKS[summary.grade] || 0) < (GRADE_RANKS[prev.grade] || 0);
+    const dedupKey = `${domain}:grade:${prev.grade}->${summary.grade}:${summary.expiryDate || 'na'}`;
+    eventStmts.push(
+      env.cert_ssl_db_d1
+        .prepare(
+          `INSERT OR IGNORE INTO events (domain, event_type, severity, title, message, dedup_key)
+           VALUES (?, 'grade_change', ?, ?, ?, ?)`
+        )
+        .bind(
+          domain,
+          isWorse ? 'warning' : 'info',
+          'Mudança de Nota SSL',
+          `A nota de segurança de ${domain} alterou de ${prev.grade} para ${summary.grade}.`,
+          dedupKey
+        )
+    );
+  }
+
+  // 2. Limiares de expiração (30, 14, 7, 1 dias)
+  const thresholds = [30, 14, 7, 1];
+  for (const t of thresholds) {
+    if (
+      summary.validityDays !== null &&
+      summary.validityDays !== undefined &&
+      summary.validityDays <= t &&
+      summary.validityDays >= 0 &&
+      (!prev || prev.validity_days === null || prev.validity_days > t)
+    ) {
+      const dedupKey = `${domain}:expiring:${t}:${summary.expiryDate}`;
+      eventStmts.push(
+        env.cert_ssl_db_d1
+          .prepare(
+            `INSERT OR IGNORE INTO events (domain, event_type, severity, title, message, dedup_key)
+             VALUES (?, 'expiring_threshold', ?, ?, ?, ?)`
+          )
+          .bind(
+            domain,
+            t <= 7 ? 'error' : 'warning',
+            `Certificado prestes a expirar (${t}d)`,
+            `O certificado de ${domain} expira em ${summary.validityDays} dia(s).`,
+            dedupKey
+          )
+      );
+    }
+  }
+
+  // 3. Certificado Expirado
+  if (
+    summary.validityDays !== null &&
+    summary.validityDays !== undefined &&
+    summary.validityDays < 0 &&
+    (!prev || prev.validity_days === null || prev.validity_days >= 0)
+  ) {
+    const dedupKey = `${domain}:expired:${summary.expiryDate}`;
+    eventStmts.push(
+      env.cert_ssl_db_d1
+        .prepare(
+          `INSERT OR IGNORE INTO events (domain, event_type, severity, title, message, dedup_key)
+           VALUES (?, 'expired', 'error', 'Certificado Expirado', ?, ?)`
+        )
+        .bind(
+          domain,
+          `O certificado SSL de ${domain} expirou há ${Math.abs(summary.validityDays)} dia(s)! Renovação imediata necessária.`,
+          dedupKey
+        )
+    );
+  }
+
+  // 4. Inseguro (T/M/F/C-)
+  if (summary.status === 'insecure' && (!prev || prev.status !== 'insecure')) {
+    const dedupKey = `${domain}:insecure:${summary.grade}:${summary.expiryDate || 'na'}`;
+    eventStmts.push(
+      env.cert_ssl_db_d1
+        .prepare(
+          `INSERT OR IGNORE INTO events (domain, event_type, severity, title, message, dedup_key)
+           VALUES (?, 'insecure', 'error', 'Configuração Insegura', ?, ?)`
+        )
+        .bind(
+          domain,
+          `O domínio ${domain} foi classificado como inseguro (Nota ${summary.grade}).`,
+          dedupKey
+        )
+    );
+  }
+
+  await env.cert_ssl_db_d1.batch([insertStmt, pruneStmt, ...eventStmts]);
   return nextCheckAt;
 }
 
@@ -525,6 +633,57 @@ export default {
           body.rawResponse
         );
         return Response.json({ success: true, nextCheckAt }, { headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // ============================================================
+    // EVENTOS / HISTÓRICO DE AUDITORIA
+    // ============================================================
+    if (path === '/events' && method === 'GET') {
+      try {
+        const { results } = await env.cert_ssl_db_d1
+          .prepare(
+            `SELECT id, domain, event_type, severity, title, message, is_read, created_at
+             FROM events
+             ORDER BY id DESC
+             LIMIT 50`
+          )
+          .all();
+        return Response.json(
+          {
+            events: (results || []).map((r) => ({
+              id: r.id,
+              domain: r.domain,
+              eventType: r.event_type,
+              severity: r.severity,
+              title: r.title,
+              message: r.message,
+              isRead: Boolean(r.is_read),
+              createdAt: normalizeCheckedAt(r.created_at),
+            })),
+          },
+          { headers: corsHeaders }
+        );
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    if (path === '/events/read' && method === 'POST') {
+      try {
+        const body = await request.json();
+        const eventId = body?.id;
+        const domain = body?.domain;
+        if (eventId) {
+          await env.cert_ssl_db_d1.prepare('UPDATE events SET is_read = 1 WHERE id = ?').bind(eventId).run();
+        } else if (domain) {
+          await env.cert_ssl_db_d1.prepare('UPDATE events SET is_read = 1 WHERE domain = ?').bind(domain).run();
+        } else {
+          await env.cert_ssl_db_d1.prepare('UPDATE events SET is_read = 1').run();
+        }
+        return Response.json({ success: true }, { headers: corsHeaders });
       } catch (e) {
         return Response.json({ error: e.message }, { status: 500, headers: corsHeaders });
       }

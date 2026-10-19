@@ -16,11 +16,41 @@ interface UrgentAlertBannerProps {
   onSelectDomain?: (domain: string) => void;
 }
 
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ||
+  "https://cert-ssl-api-d1.mosaicoworkers.workers.dev";
+
 export function UrgentAlertBanner({
   results = [],
   onSelectDomain,
 }: UrgentAlertBannerProps) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [serverAlerts, setServerAlerts] = useState<Alert[]>([]);
+
+  useEffect(() => {
+    async function fetchServerEvents() {
+      try {
+        const res = await fetch(`${API_BASE}/events`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.events)) {
+            const unread = data.events
+              .filter((e: any) => !e.isRead)
+              .map((e: any) => ({
+                id: `server-event-${e.id}`,
+                domain: e.domain,
+                type: e.severity as Alert["type"],
+                message: `${e.title}: ${e.message}`,
+              }));
+            setServerAlerts(unread);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    fetchServerEvents();
+  }, []);
 
   const derivedAlerts = useMemo<Alert[]>(() => {
     const list: Alert[] = [];
@@ -65,7 +95,30 @@ export function UrgentAlertBanner({
     return list;
   }, [results]);
 
-  const activeAlerts = derivedAlerts.filter((a) => !dismissed.has(a.id));
+  const activeAlerts = useMemo(() => {
+    const seen = new Set<string>();
+    const combined: Alert[] = [];
+    for (const a of [...derivedAlerts, ...serverAlerts]) {
+      const key = `${a.domain}:${a.message}`;
+      if (!seen.has(key) && !dismissed.has(a.id)) {
+        seen.add(key);
+        combined.push(a);
+      }
+    }
+    return combined;
+  }, [derivedAlerts, serverAlerts, dismissed]);
+
+  const handleDismiss = (alert: Alert) => {
+    setDismissed((prev) => new Set([...prev, alert.id]));
+    if (alert.id.startsWith("server-event-")) {
+      const eventId = Number(alert.id.replace("server-event-", ""));
+      fetch(`${API_BASE}/events/read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: eventId }),
+      }).catch(() => {});
+    }
+  };
 
   if (activeAlerts.length === 0) return null;
 
@@ -107,7 +160,7 @@ export function UrgentAlertBanner({
           </div>
           <button
             type="button"
-            onClick={() => setDismissed((prev) => new Set([...prev, alert.id]))}
+            onClick={() => handleDismiss(alert)}
             className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"
             aria-label="Fechar aviso"
           >
