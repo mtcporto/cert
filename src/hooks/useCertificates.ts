@@ -41,6 +41,12 @@ function isCacheValid(check: any): boolean {
   return !Number.isNaN(next) && next > now;
 }
 
+function ensureIsoUtc(dateStr?: string | null): string {
+  if (!dateStr) return new Date().toISOString();
+  if (dateStr.includes("T")) return dateStr.endsWith("Z") ? dateStr : `${dateStr}Z`;
+  return `${dateStr.replace(" ", "T")}Z`;
+}
+
 function mapCachedCheckToResult(check: any): CertificateResult {
   const validityDays: number | undefined =
     check.validityDays ?? check.validity_days ?? undefined;
@@ -50,8 +56,7 @@ function mapCachedCheckToResult(check: any): CertificateResult {
     check.totalValidityDays ?? check.total_validity_days ?? undefined;
   const percentRemaining: number | undefined =
     check.percentRemaining ?? check.percent_remaining ?? undefined;
-  const checkedAt: string =
-    check.checkedAt ?? check.checked_at ?? new Date().toISOString();
+  const checkedAt: string = ensureIsoUtc(check.checkedAt ?? check.checked_at);
   const nextCheckAt: string | undefined =
     check.nextCheckAt ?? check.next_check_at ?? undefined;
   const rawResponse = check.rawResponse ?? check.raw_response;
@@ -389,30 +394,32 @@ export function useCertificates() {
 
       const validCachedByDomain = new Map<string, CertificateResult>();
 
-      // 2. BUSCAR CACHE NO CLOUDFLARE D1 EM PARALELO (inclui raw_response completo para a página de detalhes)
+      // 2. BUSCAR CACHE NO CLOUDFLARE D1 EM UM ÚNICO REQUEST LEVE (/certs/summary)
       if (!force) {
-        await Promise.all(
-          listToRun.map(async (domain) => {
-            try {
-              const res = await fetch(
-                `${API_BASE}/certs?domain=${encodeURIComponent(domain)}`
-              );
-              if (res.ok) {
-                const data: any = await res.json();
-                const check = data.check;
-                if (check && isCacheValid(check)) {
-                  const mapped = mapCachedCheckToResult(check);
-                  validCachedByDomain.set(domain, mapped);
-                  setResults((prev) =>
-                    prev.map((r) => (r.domain === domain ? mapped : r))
-                  );
-                }
+        try {
+          const res = await fetch(`${API_BASE}/certs/summary`);
+          if (res.ok) {
+            const data: any = await res.json();
+            const checks: any[] = Array.isArray(data.checks) ? data.checks : [];
+            const checksMap = new Map<string, any>(checks.map((c) => [c.domain, c]));
+
+            for (const domain of listToRun) {
+              const check = checksMap.get(domain);
+              if (check && isCacheValid(check)) {
+                const mapped = mapCachedCheckToResult(check);
+                validCachedByDomain.set(domain, mapped);
               }
-            } catch {
-              // ignore
             }
-          })
-        );
+
+            if (validCachedByDomain.size > 0) {
+              setResults((prev) =>
+                prev.map((r) => validCachedByDomain.get(r.domain) || r)
+              );
+            }
+          }
+        } catch {
+          // ignore erro de rede e continua para verificação se necessário
+        }
       }
 
       // 3. DOMÍNIOS QUE PRECISAM DE VERIFICAÇÃO
@@ -579,6 +586,26 @@ export function useCertificates() {
     }
   }, [domainsLoaded, domains, runAnalysis]);
 
+  // Carregar detalhes completos de um domínio sob demanda (com ciphers, raw_response, etc.)
+  const loadDomainDetails = useCallback(async (domain: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/certs/${encodeURIComponent(domain)}`);
+      if (res.ok) {
+        const data: any = await res.json();
+        if (data.check) {
+          const mapped = mapCachedCheckToResult(data.check);
+          setResults((prev) =>
+            prev.map((r) => (r.domain === domain ? mapped : r))
+          );
+          return mapped;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  }, []);
+
   const refresh = useCallback(() => {
     runAnalysis({ force: true });
   }, [runAnalysis]);
@@ -593,6 +620,7 @@ export function useCertificates() {
     refresh,
     refreshDomain,
     loadDomains,
+    loadDomainDetails,
   };
 }
 

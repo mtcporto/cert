@@ -24,3 +24,6 @@ CREATE TABLE IF NOT EXISTS certificate_checks (
 
 CREATE INDEX IF NOT EXISTS idx_cert_checks_domain ON certificate_checks(domain);
 CREATE INDEX IF NOT EXISTS idx_cert_checks_next_check ON certificate_checks(next_check_at);
+CREATE INDEX IF NOT EXISTS idx_cert_checks_domain_id ON certificate_checks(domain, id DESC);
+CREATE INDEX IF NOT EXISTS idx_cert_checks_domain_checked ON certificate_checks(domain, checked_at DESC);
+

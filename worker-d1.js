@@ -139,13 +139,25 @@ function summarizeAnalysis(domain, data) {
   };
 }
 
+function normalizeCheckedAt(val) {
+  if (!val) return new Date().toISOString();
+  if (typeof val === 'string') {
+    if (val.includes('T')) return val.endsWith('Z') ? val : `${val}Z`;
+    // Formato SQLite padrão CURRENT_TIMESTAMP: YYYY-MM-DD HH:MM:SS
+    return `${val.replace(' ', 'T')}Z`;
+  }
+  return new Date(val).toISOString();
+}
+
 async function saveCheck(env, summary, rawResponse) {
   const nextCheckAt = calcNextCheckAt(summary.status, summary.validityDays);
-  await env.cert_ssl_db_d1
+  const checkedAt = new Date().toISOString();
+
+  const insertStmt = env.cert_ssl_db_d1
     .prepare(
       `INSERT INTO certificate_checks
-       (domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, raw_response)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, checked_at, raw_response)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       summary.domain,
@@ -157,9 +169,24 @@ async function saveCheck(env, summary, rawResponse) {
       summary.totalValidityDays ?? null,
       summary.percentRemaining ?? null,
       nextCheckAt,
+      checkedAt,
       rawResponse ?? null
+    );
+
+  // Retenção: manter apenas as últimas 30 verificações por domínio
+  const pruneStmt = env.cert_ssl_db_d1
+    .prepare(
+      `DELETE FROM certificate_checks
+       WHERE domain = ? AND id NOT IN (
+         SELECT id FROM certificate_checks
+         WHERE domain = ?
+         ORDER BY id DESC
+         LIMIT 30
+       )`
     )
-    .run();
+    .bind(summary.domain, summary.domain);
+
+  await env.cert_ssl_db_d1.batch([insertStmt, pruneStmt]);
   return nextCheckAt;
 }
 
@@ -175,7 +202,7 @@ function normalizeCheckRow(row) {
     totalValidityDays: row.total_validity_days,
     percentRemaining: row.percent_remaining,
     nextCheckAt: row.next_check_at,
-    checkedAt: row.checked_at,
+    checkedAt: normalizeCheckedAt(row.checked_at),
     rawResponse: row.raw_response,
   };
 }
@@ -271,27 +298,10 @@ export default {
     // ============================================================
     // CERTS
     // ============================================================
-    if (path === '/certs' && method === 'GET') {
-      try {
-        const rawDomain = url.searchParams.get('domain');
-        if (rawDomain !== null) {
-          const domain = normalizeHost(rawDomain);
-          if (!domain) {
-            return Response.json({ error: 'Invalid domain' }, { status: 400, headers: corsHeaders });
-          }
-          const row = await env.cert_ssl_db_d1
-            .prepare(
-              `SELECT domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, checked_at, raw_response
-               FROM certificate_checks
-               WHERE domain = ?
-               ORDER BY checked_at DESC, id DESC
-               LIMIT 1`
-            )
-            .bind(domain)
-            .first();
-          return Response.json({ check: normalizeCheckRow(row) }, { headers: corsHeaders });
-        }
 
+    // Endpoint leve para o dashboard: lista o resumo do último check de cada domínio (sem raw_response)
+    if ((path === '/certs/summary' || (path === '/certs' && !url.searchParams.has('domain'))) && method === 'GET') {
+      try {
         const { results } = await env.cert_ssl_db_d1
           .prepare(
             `SELECT c.domain, c.grade, c.status, c.validity_days, c.expiry_date, c.issuer, c.total_validity_days, c.percent_remaining, c.next_check_at, c.checked_at
@@ -303,6 +313,33 @@ export default {
           )
           .all();
         return Response.json({ checks: results.map(normalizeCheckRow) }, { headers: corsHeaders });
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // Endpoint de detalhe completo de um domínio (com raw_response)
+    const isSingleDomainRoute = (path.startsWith('/certs/') && path !== '/certs/summary') || (path === '/certs' && url.searchParams.has('domain'));
+    if (isSingleDomainRoute && method === 'GET') {
+      try {
+        const rawDomain = path.startsWith('/certs/')
+          ? path.slice('/certs/'.length)
+          : url.searchParams.get('domain');
+        const domain = normalizeHost(rawDomain);
+        if (!domain) {
+          return Response.json({ error: 'Invalid domain' }, { status: 400, headers: corsHeaders });
+        }
+        const row = await env.cert_ssl_db_d1
+          .prepare(
+            `SELECT domain, grade, status, validity_days, expiry_date, issuer, total_validity_days, percent_remaining, next_check_at, checked_at, raw_response
+             FROM certificate_checks
+             WHERE domain = ?
+             ORDER BY id DESC
+             LIMIT 1`
+          )
+          .bind(domain)
+          .first();
+        return Response.json({ check: normalizeCheckRow(row) }, { headers: corsHeaders });
       } catch (e) {
         return Response.json({ error: e.message }, { status: 500, headers: corsHeaders });
       }

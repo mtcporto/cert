@@ -31,6 +31,7 @@ export default function Home() {
     activeDomain,
     refresh,
     refreshDomain,
+    loadDomainDetails,
   } = useCertificates();
 
   const [domainModalOpen, setDomainModalOpen] = useState<boolean>(false);
@@ -73,6 +74,7 @@ export default function Home() {
 
   const handleSelectDomain = (domain: string) => {
     setSelectedDomain(domain);
+    loadDomainDetails(domain);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
