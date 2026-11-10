@@ -73,7 +73,7 @@ O CertMonitor implementa regras estritas de classificação de conformidade:
 ## 🛠️ Desenvolvimento Local
 
 ### Pré-requisitos
-- Node.js 20+ ou 24+
+- Node.js 24.x (conforme `package.json`)
 - npm ou pnpm
 - Conta Cloudflare com Wrangler CLI autenticado (`npx wrangler login`)
 
@@ -145,6 +145,11 @@ npx wrangler d1 execute cert-ssl-db-d1 --remote --file=./d1-schema.sql
 ---
 
 ## 🧪 Testes Automatizados
+
+Os testes usam Vitest 4.1.12+ e Vite 6.4.4+ (limitados às versões
+principais 4 e 6). Vite é uma dependência de desenvolvimento explícita para
+manter a versão corrigida sem overrides; Vitest 4 remove a dependência de
+`tinypool`. Instale as versões do lockfile com `npm ci`.
 
 A suíte de testes unitários baseada em **Vitest** cobre:
 - Classificação correta de certificados válidos, expirando, expirados e inseguros.
